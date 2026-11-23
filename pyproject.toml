@@ -10,6 +10,7 @@ dependencies = []
 
 [project.scripts]
 ambler = "ambler.__main__:main"
+ambler-cli = "ambler.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.11,<0.12"]
