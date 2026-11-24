@@ -8,10 +8,10 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from ambler import Walk
-from ambler.nodes import count, start
-from ambler.nodes.count import Count
-from ambler.nodes.start import Start
-from ambler.nodes.stop import Stop
+from ambler.examples.counter import count, start
+from ambler.examples.counter.count import Count
+from ambler.examples.counter.start import Start
+from ambler.examples.counter.stop import Stop
 
 __all__ = ["Error", "run"]
 

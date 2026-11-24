@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from ambler.nodes.start import Error, Outcome, Start
+from ambler.examples.counter.start import Error, Outcome, Start
 
 
 @dataclass

@@ -11,11 +11,24 @@ A program is a set of small **nodes** joined into a **walk**. Each node does one
 
 Requires [uv](https://docs.astral.sh/uv/). uv fetches a suitable Python (3.12 or later) if you don't have one.
 
+`ambler` is the native CLI of the Ambler Tooling Protocol for Python projects. Add it to a project as a dev dependency and run it as a project script, with nothing installed on your PATH:
+
 ```bash
-uv run ambler
+uv add --dev git+https://github.com/argenkiwi/ambler-py
+uv run ambler --help          # node | walk | util | check
 ```
 
-The program asks for a starting number, counts up once a second, and stops at random. Invalid input sends the walk back to the start. See [`specs/counter.md`](specs/counter.md) for the behaviour it implements.
+Projects created with the `ambler` dispatcher (`ambler new --target py`) already have it.
+
+### Example
+
+A small counter walk ships in [`src/ambler/examples/counter/`](src/ambler/examples/counter/):
+
+```bash
+uv run ambler-counter
+```
+
+It asks for a starting number, counts up once a second, and stops at random. Invalid input sends the walk back to the start. See [`spec.md`](src/ambler/examples/counter/spec.md) for the behaviour it implements.
 
 ## Concepts
 
@@ -63,7 +76,7 @@ async def step(self, id: Id, state: State) -> Id | None:
         # ...
 ```
 
-Then `await walk.run(Id.START, state)` steps until a node halts. The complete walk is in [`src/ambler/walks/counter.py`](src/ambler/walks/counter.py), its wiring test is in [`tests/walks/test_counter.py`](tests/walks/test_counter.py), and [`src/ambler/__main__.py`](src/ambler/__main__.py) runs it.
+Then `await walk.run(Id.START, state)` steps until a node halts. The complete walk is in [`src/ambler/examples/counter/counter.py`](src/ambler/examples/counter/counter.py) and its wiring test is in [`tests/examples/counter/test_counter.py`](tests/examples/counter/test_counter.py).
 
 > [!TIP]
 > Don't add a `case _:` arm when matching outcomes. Leaving it out is what makes pyright (`reportMatchNotExhaustive`, enabled in `pyproject.toml`) fail on a newly added outcome until it is wired. Treat `uv run pyright` as part of the build: a walk that skips the check silently halts on an unwired outcome.
@@ -72,10 +85,11 @@ Then `await walk.run(Id.START, state)` steps until a node halts. The complete wa
 
 ```text
 src/ambler/__init__.py   Node protocol and Walk base class
-src/ambler/__main__.py   The program: runs this branch's primary walk
+src/ambler/cli.py        The native CLI entry point (`ambler`); its walk is src/ambler/walks/cli.py
 src/ambler/walks/        Walks wiring nodes together
 src/ambler/nodes/        Reusable atomic step nodes and shared state protocols
-src/ambler/utils/        Side-effectful utilities (terminal I/O, external APIs, system services)
+src/ambler/utils/        Side-effectful utilities (I/O, external APIs, system services)
+src/ambler/examples/     Example walks (counter)
 tests/                   pytest suite, mirroring src/ambler/
 specs/                   Plain-language spec for each walk
 notes/                   Design notes (Zettelkasten, Markdown source of truth)
