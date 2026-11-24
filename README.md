@@ -12,7 +12,7 @@ A program is a set of small **nodes** joined into a **walk**. Each node does one
 Requires [uv](https://docs.astral.sh/uv/). uv fetches a suitable Python (3.12 or later) if you don't have one.
 
 ```bash
-uv run ambler
+uv run counter
 ```
 
 The program asks for a starting number, counts up once a second, and stops at random. Invalid input sends the walk back to the start. See [`specs/counter.md`](specs/counter.md) for the behaviour it implements.
