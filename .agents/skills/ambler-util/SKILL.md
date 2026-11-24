@@ -67,7 +67,7 @@ def _write_line(entry: str) -> None:
         f.write(f"{entry}\n")
 ```
 
-See `src/ambler/utils/terminal.py` for an existing utility used by `src/ambler/nodes/start.py`.
+See `src/ambler/examples/counter/terminal.py` for an existing utility used by `src/ambler/examples/counter/start.py`.
 
 ### Rules
 

@@ -1,21 +1,6 @@
-"""The program this branch builds: runs its primary walk.
+"""``python -m ambler`` runs the native Ambler CLI."""
 
-Run with ``uv run ambler`` (or ``uv run python -m ambler``). Additional walks get
-their own entry under ``[project.scripts]`` in ``pyproject.toml``.
-"""
-
-import asyncio
-import sys
-
-from ambler.walks import counter
-
-
-def main() -> None:
-    try:
-        asyncio.run(counter.run())
-    except counter.Error as e:
-        sys.exit(f"Error: {e}")
-
+from ambler.cli import main
 
 if __name__ == "__main__":
     main()

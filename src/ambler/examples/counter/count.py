@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Protocol
 
-from ambler.nodes import HasCount
+from ambler.examples.counter import HasCount
 
 
 class Outcome(Enum):

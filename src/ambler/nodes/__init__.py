@@ -3,7 +3,19 @@
 from typing import Protocol
 
 
-class HasCount(Protocol):
-    """A state that has a count field."""
+class HasArgv(Protocol):
+    """A state that has an argv field."""
 
-    count: int
+    argv: list[str]
+
+
+class HasCommand(Protocol):
+    """A state that has a command field."""
+
+    command: str | None
+
+
+class HasExitCode(Protocol):
+    """A state that has an exit_code field."""
+
+    exit_code: int
