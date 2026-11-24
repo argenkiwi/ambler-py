@@ -1,6 +1,6 @@
 """The program this branch builds: runs its primary walk.
 
-Run with ``uv run ambler`` (or ``uv run python -m ambler``). Additional walks get
+Run with ``uv run counter`` (or ``uv run python -m ambler``). Additional walks get
 their own entry under ``[project.scripts]`` in ``pyproject.toml``.
 """
 

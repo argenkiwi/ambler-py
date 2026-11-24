@@ -203,7 +203,7 @@ If the branch already has a primary walk and this one is secondary, put the same
 
 ```toml
 [project.scripts]
-ambler = "ambler.__main__:main"
+<primary> = "ambler.__main__:main"   # never `ambler`: that name belongs to the orchestrator CLI
 <name> = "ambler.walks.<name>:main"
 ```
 
@@ -216,7 +216,7 @@ Only touch dependencies if the walk itself (not its nodes or utils) needs a new 
 Run the walk to confirm it behaves as specified:
 
 ```bash
-uv run ambler    # primary walk (src/ambler/__main__.py)
+uv run <primary>    # primary walk (src/ambler/__main__.py)
 uv run <name>    # secondary walk ([project.scripts] entry)
 ```
 
@@ -242,4 +242,4 @@ Before finishing, confirm:
 - [ ] `tests/walks/test_<name>.py` covers each branch of the graph.
 - [ ] The entry point calls `ambler.walks.<name>.run()` and catches only `ambler.walks.<name>.Error`.
 - [ ] `uv run pytest`, `uv run pyright` and `uv run ruff check` are all clean.
-- [ ] The walk runs end-to-end without errors (`uv run ambler` or `uv run <name>`).
+- [ ] The walk runs end-to-end without errors (`uv run <primary>` or `uv run <name>`).
