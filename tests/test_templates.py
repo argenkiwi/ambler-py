@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 
 import ambler
+from ambler.nodes.scaffold_node import Outcome as NodeOutcome
+from ambler.nodes.scaffold_node import ScaffoldNode
 from ambler.nodes.scaffold_walk import Outcome, ScaffoldWalk
 from ambler.utils.fs import SystemScaffoldUtils
 from ambler.utils.templates import (
@@ -137,6 +139,24 @@ def _project(root: Path) -> None:
         (src / "nodes" / f"{name}.py").write_text(_node(name, spec))
         (tests / "nodes" / f"test_{name}.py").write_text(_node_test(name, spec))
     (src / "utils" / "journal.py").write_text(render_util("journal", "Journal"))
+    (src / "board.py").write_text(
+        '"""A type the nodes import by path."""\n\n\nclass Board:\n    """A board."""\n'
+    )
+
+
+PLACE = [
+    "place",
+    "--terminal",
+    "--state",
+    f"board:{PKG}.board.Board",
+    "--state",
+    f"boards:list[{PKG}.board.Board]",
+    "--state",
+    "stamp:datetime.datetime | None",
+    "--state",
+    "path",
+]
+"""A node scaffolded through ``ScaffoldNode``, with types given by their paths."""
 
 
 def _run(project: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -164,6 +184,8 @@ def project(tmp_path_factory: pytest.TempPathFactory) -> Path:
             def root(self) -> Path:
                 return root
 
+        state = _State(PLACE)
+        assert await ScaffoldNode(Here()).run(state) == NodeOutcome.DONE
         for argv in walks:
             state = _State(argv)
             assert await ScaffoldWalk(Here()).run(state) == Outcome.DONE
@@ -194,6 +216,20 @@ def test_scaffolded_files_pass_the_projects_checks(
 ) -> None:
     result = _run(project, *args)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_types_given_by_path_are_imported_into_the_nodes_package(
+    project: Path,
+) -> None:
+    init = (project / "src" / PKG / "nodes" / "__init__.py").read_text()
+    assert "from datetime import datetime\n" in init
+    assert f"from {PKG}.board import Board\n" in init
+    assert "    board: Board\n" in init
+    assert "    boards: list[Board]\n" in init
+    assert "    stamp: datetime | None\n" in init
+    test = (project / "tests" / "nodes" / "test_place.py").read_text()
+    assert "    board: Board = field(default_factory=Board)\n" in test
+    assert "    stamp: datetime | None = None\n" in test
 
 
 def test_the_walks_get_scripts(project: Path) -> None:

@@ -31,6 +31,11 @@ class Imports:
         self.plain |= other.plain
 
 
+Origins = dict[str, tuple[str | None, str]]
+"""Where each module-level name comes from: ``(module, name)`` for a from-import,
+``(None, name)`` for a plain import, and ``(here, name)`` if defined here."""
+
+
 @dataclass(frozen=True)
 class Protocols:
     """The ``Has*`` protocols of the nodes package and their ``(name, type)`` fields."""
@@ -38,6 +43,8 @@ class Protocols:
     fields: dict[str, list[tuple[str, str]]]
     imports: dict[str, Imports]
     """For each protocol, the imports its field types need."""
+    origins: Origins = field(default_factory=Origins)
+    """Where each name the nodes package binds comes from."""
 
 
 @dataclass(frozen=True)
@@ -58,17 +65,18 @@ def _names(node: ast.AST) -> set[str]:
     return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
 
 
-def _origins(tree: ast.Module, here: str) -> dict[str, tuple[str | None, str]]:
-    """Where each module-level name comes from: ``(module, name)`` for a from-import,
-    ``(None, name)`` for a plain import, and ``(here, name)`` if defined here."""
-    origins: dict[str, tuple[str | None, str]] = {}
+def _origins(tree: ast.Module, here: str) -> Origins:
+    """Where each module-level name of ``tree`` comes from."""
+    origins: Origins = {}
     for stmt in tree.body:
         if isinstance(stmt, ast.ImportFrom) and stmt.module and stmt.level == 0:
             for alias in stmt.names:
                 origins[alias.asname or alias.name] = (stmt.module, alias.name)
         elif isinstance(stmt, ast.Import):
             for alias in stmt.names:
-                origins[alias.asname or alias.name] = (None, alias.name)
+                # ``import a.b`` binds ``a``; ``import a.b as c`` binds ``c``.
+                bound = alias.asname or alias.name.split(".")[0]
+                origins[bound] = (None, alias.name)
         elif isinstance(stmt, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             origins[stmt.name] = (here, stmt.name)
         elif isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.TypeAlias)):
@@ -85,9 +93,7 @@ def _origins(tree: ast.Module, here: str) -> dict[str, tuple[str | None, str]]:
     return origins
 
 
-def _imports_for(
-    names: set[str], origins: dict[str, tuple[str | None, str]]
-) -> Imports:
+def _imports_for(names: set[str], origins: Origins) -> Imports:
     imports = Imports()
     for name in sorted(names - BUILTINS):
         origin = origins.get(name)
@@ -95,7 +101,10 @@ def _imports_for(
             continue
         module, original = origin
         if module is None:
-            imports.plain.add(original)
+            if original.split(".")[0] == name:
+                imports.plain.add(original)
+            else:
+                imports.plain.add(f"{original} as {name}")
         elif original == name:
             imports.add_from(module, name)
         else:
@@ -128,7 +137,90 @@ def read_protocols(init_source: str, pkg: str) -> Protocols:
                 *(_names(ast.parse(t, mode="eval")) for _, t in own)
             )
             imports[stmt.name] = _imports_for(used, origins)
-    return Protocols(fields, imports)
+    return Protocols(fields, imports, origins)
+
+
+def _dotted(node: ast.expr) -> list[str] | None:
+    """``a.b.C`` as ``["a", "b", "C"]``, or ``None`` if ``node`` is not such a path."""
+    if isinstance(node, ast.Name):
+        return [node.id]
+    if isinstance(node, ast.Attribute):
+        head = _dotted(node.value)
+        return None if head is None else [*head, node.attr]
+    return None
+
+
+def resolve_type(
+    type_text: str, field_name: str, origins: Origins
+) -> tuple[str, Imports]:
+    """``type_text`` with every ``a.b.Type`` path shortened to ``Type``, as
+    ``ast.unparse`` writes it, and the imports it needs in the nodes package.
+
+    ``origins`` are the names the nodes package already binds. A path that starts
+    with one of them, such as ``datetime.date`` after ``import datetime``, is
+    already usable there and is kept as written.
+
+    Raises:
+        ValueError: if ``type_text`` is not an expression, is or contains a quoted
+            type, uses a name that is not a builtin, not given by its path and not
+            bound in ``origins``, or shortens a path to a name ``origins`` binds to
+            something else.
+    """
+    try:
+        tree = ast.parse(type_text, mode="eval")
+    except SyntaxError as e:
+        raise ValueError(f"`{type_text}` is not a type for `{field_name}`") from e
+
+    literals = {
+        id(constant)
+        for sub in ast.walk(tree)
+        if isinstance(sub, ast.Subscript)
+        and (_dotted(sub.value) or [""])[-1] == "Literal"
+        for constant in ast.walk(sub.slice)
+    }
+    for sub in ast.walk(tree):
+        if (
+            isinstance(sub, ast.Constant)
+            and isinstance(sub.value, str)
+            and id(sub) not in literals
+        ):
+            raise ValueError(
+                f"`{type_text}` quotes a type: give `--state {field_name}` "
+                "the type without quotes, so its path can be imported"
+            )
+
+    imports = Imports()
+
+    class Shorten(ast.NodeTransformer):
+        def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
+            path = _dotted(node)
+            if path is None:
+                self.generic_visit(node)
+                return node
+            if path[0] in origins:
+                return node
+            module, name = ".".join(path[:-1]), path[-1]
+            bound = origins.get(name)
+            if bound is not None and bound != (module, name):
+                raise ValueError(
+                    f"`{name}` already means something else in nodes/__init__.py, "
+                    f"so `{module}.{name}` cannot be imported there as `{name}`"
+                )
+            imports.add_from(module, name)
+            return ast.copy_location(ast.Name(id=name, ctx=ast.Load()), node)
+
+    shortened = Shorten().visit(tree)
+    shortened_names = {name for names in imports.from_.values() for name in names}
+    for name in sorted(_names(shortened) - shortened_names - BUILTINS):
+        if name not in origins:
+            where = "" if name == type_text.strip() else f" in `{type_text}`"
+            raise ValueError(
+                f"`{name}`{where} is not a builtin and nodes/__init__.py does not "
+                f"import it: give its path, as in "
+                f"`--state {field_name}:<module>.{name}`"
+            )
+    imports.update(_imports_for(_names(shortened) - shortened_names, origins))
+    return ast.unparse(shortened), imports
 
 
 def _script_method(
