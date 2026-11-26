@@ -39,8 +39,10 @@ def cli(rec: Recorder, fs: FakeFs) -> Cli:
     )
 
 
-async def run(argv: list[str]) -> tuple[State, Recorder, FakeFs]:
-    rec, fs = Recorder(), FakeFs()
+async def run(
+    argv: list[str], fs: FakeFs | None = None
+) -> tuple[State, Recorder, FakeFs]:
+    rec, fs = Recorder(), fs or FakeFs({ROOT / "pyproject.toml": "[project]\n"})
     state = State(argv=argv)
     await cli(rec, fs).run(Id.CLI_ROUTE, state)
     return state, rec, fs
@@ -87,7 +89,7 @@ async def test_node_walk_and_util_scaffold_their_files() -> None:
     _, _, fs = await run(["node", "stop", "--terminal"])
     assert ROOT / "src" / "demo" / "nodes" / "stop.py" in fs.files
 
-    _, _, fs = await run(["walk", "w", "--nodes", "a"])
+    _, _, fs = await run(["walk", "w", "--nodes", "stop"], fs)
     assert ROOT / "src" / "demo" / "walks" / "w.py" in fs.files
 
     _, _, fs = await run(["util", "terminal"])

@@ -20,10 +20,11 @@ The native Ambler Tooling Protocol (ATP) command-line tool, run as `uv run amble
 - Otherwise prints the created paths and halts.
 
 ### ScaffoldWalk
-- Usage: `walk <name> --nodes <n1,n2> [--edge <node.OUTCOME=target>...] [--no-runner]`.
-- Writes `src/<pkg>/walks/<name>.py` and `tests/walks/test_<name>.py`, plus `specs/<name>.md` if it does not exist. The first node is the start node. `--no-runner` is accepted but currently has no effect.
-- Missing name, missing or empty `--nodes`: exit code 2. No `pyproject.toml`: exit code 1. Walk already exists: exit code 1.
-- Otherwise prints the created paths and halts.
+- Usage: `walk <name> --nodes <n1,n2> [--edge <node.OUTCOME=target>...] [--no-runner]`. Edges may also be separated by commas; outcomes may be given in any case; `halt` as the target ends the walk.
+- Reads each node from `src/<pkg>/nodes/<node>.py`: its `Outcome` members (none if `run` returns `None`), whether it has an `Error`, the `Has*` protocols its `run` takes (directly or through a local `State` protocol) and its `Utils` methods; and the fields of those protocols from `src/<pkg>/nodes/__init__.py`.
+- Writes `src/<pkg>/walks/<name>.py` as `uv run ambler help walk` describes: `__all__`, `Error` if any node can fail (a tuple if several can), a `State` dataclass with every field the nodes need and a default for each, `Id`, the walk class whose `step` matches every outcome (outcomes without an edge raise `not yet wired: NODE.OUTCOME`), `run()` and `main()`. Writes `tests/walks/test_<name>.py` with a `Script` that stands in for every node's utils and one unfinished test, and `specs/<name>.md` with a section per node if it does not exist. Unless `--no-runner`, adds a `<name>` script running the walk's `main` to `[project.scripts]` in `pyproject.toml`.
+- Missing name, missing or empty `--nodes`, a malformed edge, an edge naming an unknown node, outcome or target, an edge from a terminal node, a node that cannot be read, or two nodes giving a field different types: exit code 2. A missing node: exit code 2, listing the `node` commands to run first. No `pyproject.toml`: exit code 1. Walk or script already exists: exit code 1. Nothing is written when it fails.
+- Otherwise prints the created paths and what to do next, and halts.
 
 ### ScaffoldUtil
 - Usage: `util <name>`.

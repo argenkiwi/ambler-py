@@ -1,6 +1,6 @@
 [project]
 name = "ambler"
-version = "0.2.1"
+version = "0.3.0"
 description = "A predictable architecture for writing programs as graphs, in Python."
 readme = "README.md"
 license = "MIT"

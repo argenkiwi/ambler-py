@@ -15,6 +15,7 @@ class FakeFs:
         self.package = package
         self.out: list[str] = []
         self.errors: list[str] = []
+        self.formatted: list[Path] = []
 
     def root(self) -> Path:
         return ROOT
@@ -41,3 +42,6 @@ class FakeFs:
 
     def print_error(self, message: str) -> None:
         self.errors.append(message)
+
+    def format(self, paths: list[Path]) -> None:
+        self.formatted.extend(paths)
