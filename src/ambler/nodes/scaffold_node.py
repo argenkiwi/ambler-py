@@ -1,3 +1,4 @@
+import ast
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Protocol
@@ -8,9 +9,11 @@ from ambler.utils.fs import ProjectError
 from ambler.utils.fs import ScaffoldUtils as Utils
 from ambler.utils.fs import SystemScaffoldUtils as SystemUtils
 from ambler.utils.naming import to_pascal, to_shout, to_snake
+from ambler.utils.source import Imports, Protocols, SourceError, read_protocols
 from ambler.utils.templates import (
     PACKAGE_INIT,
     StateField,
+    protocol_name,
     render_node,
     render_node_test,
     render_protocols,
@@ -73,18 +76,23 @@ class ScaffoldNode:
                 state, 2, "Error: Specify either --outcomes <a,b> or --terminal"
             )
 
-        state_fields = _parse_state_fields(args.state or [])
-        cls_name = to_pascal(name)
-
-        self.utils.mkdir(nodes_dir)
-        self.utils.mkdir(tests_dir)
-
         init_file = nodes_dir / "__init__.py"
         init_content = (
             self.utils.read_text(init_file)
             if self.utils.exists(init_file)
             else PACKAGE_INIT
         )
+        try:
+            state_fields, imports = _resolve_state_fields(
+                args.state or [], read_protocols(init_content, pkg)
+            )
+        except (SourceError, ValueError) as e:
+            return self._fail(state, 2, f"Error: {e}")
+        cls_name = to_pascal(name)
+
+        self.utils.mkdir(nodes_dir)
+        self.utils.mkdir(tests_dir)
+
         updated = render_protocols(init_content, state_fields)
         if updated != init_content:
             self.utils.write_text(init_file, updated)
@@ -111,6 +119,7 @@ class ScaffoldNode:
                 fallible=fallible,
                 outcomes=outcomes,
                 state_fields=state_fields,
+                imports=imports,
             ),
         )
 
@@ -124,12 +133,49 @@ class ScaffoldNode:
         return Outcome.FAILED
 
 
-def _parse_state_fields(items: list[str]) -> list[StateField]:
-    """Parses ``name[:type]`` items; the type defaults to ``object``."""
+def _normalise(type_text: str, field_name: str) -> str:
+    """``type_text`` as ``ast.unparse`` writes it, so equal types compare equal."""
+    try:
+        return ast.unparse(ast.parse(type_text, mode="eval"))
+    except SyntaxError as e:
+        raise ValueError(f"`{type_text}` is not a type for `{field_name}`") from e
+
+
+def _resolve_state_fields(
+    items: list[str], protocols: Protocols
+) -> tuple[list[StateField], Imports]:
+    """Parses ``name[:type]`` items against the existing ``Has*`` protocols.
+
+    A field without a type reuses its protocol's type, and the imports that type
+    needs. A field with a type must match its protocol, if it has one.
+
+    Raises:
+        ValueError: if a field has no type and no protocol, or a different type
+            from its protocol's.
+    """
     fields: list[StateField] = []
+    imports = Imports()
     for item in items:
-        f_name, _, f_type = item.partition(":")
-        fields.append(
-            (to_snake(f_name.strip()), f_type.strip() if ":" in item else "object")
-        )
-    return fields
+        raw_name, has_type, raw_type = item.partition(":")
+        f_name = to_snake(raw_name.strip())
+        protocol = protocol_name(f_name)
+        existing = dict(protocols.fields.get(protocol, [])).get(f_name)
+        if not has_type:
+            if existing is None:
+                raise ValueError(
+                    f"no node declares `{f_name}` yet, so `--state {f_name}` needs "
+                    f"its type: use `--state {f_name}:<Type>`"
+                )
+            f_type = existing
+        else:
+            f_type = _normalise(raw_type.strip(), f_name)
+            if existing is not None and existing != f_type:
+                raise ValueError(
+                    f"`{f_name}` is already declared as `{existing}` in "
+                    f"nodes/__init__.py, not `{f_type}`: use `--state {f_name}` "
+                    "to reuse it"
+                )
+        if existing is not None:
+            imports.update(protocols.imports[protocol])
+        fields.append((f_name, f_type))
+    return fields, imports

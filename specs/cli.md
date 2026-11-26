@@ -15,7 +15,8 @@ The native Ambler Tooling Protocol (ATP) command-line tool, run as `uv run amble
 ### ScaffoldNode
 - Usage: `node <name> (--outcomes <a,b> | --terminal) [--fallible] [--state <name:type>...]`.
 - Writes `src/<pkg>/nodes/<name>.py` and `tests/nodes/test_<name>.py`, and adds a `Has<Field>` protocol to `src/<pkg>/nodes/__init__.py` for each state field that lacks one.
-- Missing name, missing `--outcomes`/`--terminal`, or no `pyproject.toml`: prints an error, exit code 2 (1 without a project), halts.
+- `--state <field>` without a type reuses the field of the existing `Has<Field>` protocol: the test's `MockState` gets that protocol's type, and the imports the type needs in `nodes/__init__.py`. `--state <field>:<Type>` for a field that already has a protocol must give the same type.
+- Missing name, missing `--outcomes`/`--terminal`, a field without a type that no protocol declares, a type that differs from the field's existing protocol, or no `pyproject.toml`: prints an error, exit code 2 (1 without a project), writes nothing, halts.
 - Node already exists: prints an error, exit code 1, halts.
 - Otherwise prints the created paths and halts.
 
