@@ -30,54 +30,94 @@ def render_protocols(
     pkg: str = "",
 ) -> str:
     """Appends a ``Has*`` protocol for every state field not yet declared, and adds
-    ``imports``, which the new protocols' types need, after the existing imports.
+    ``imports``, which the new protocols' types need, to the existing imports.
 
-    The imports are not merged or sorted: ``ScaffoldUtils.format`` leaves that to the
-    project's ruff. Returns ``init_content`` unchanged when nothing is missing.
+    Returns ``init_content`` unchanged when nothing is missing.
     """
+    tree = ast.parse(init_content)
+    declared = {s.name for s in tree.body if isinstance(s, ast.ClassDef)}
     needed = Imports()
     protocols = ""
     for f_name, f_type in state_fields:
         p_name = protocol_name(f_name)
-        if p_name not in init_content and p_name not in protocols:
+        if p_name not in declared:
+            declared.add(p_name)
             doc = f'"""A state that has a {f_name} field."""'
             protocols += (
                 f"\n\nclass {p_name}(Protocol):\n    {doc}\n\n    {f_name}: {f_type}\n"
             )
-    if protocols:
-        if "from typing import Protocol" not in init_content:
-            needed.add_from("typing", "Protocol")
-        if imports is not None:
-            needed.update(imports)
-    return _add_imports(init_content, render_imports(pkg, needed)) + protocols
+    if not protocols:
+        return init_content
+    needed.add_from("typing", "Protocol")
+    if imports is not None:
+        needed.update(imports)
+    return _add_imports(init_content, tree, needed, pkg).rstrip("\n") + "\n" + protocols
 
 
-def _add_imports(source: str, lines: str) -> str:
-    """``source`` with ``lines`` after its last top-level import, or else after its
-    docstring, or else at the top."""
-    if not lines:
-        return source
-    at, after_docstring = 0, False
-    for index, stmt in enumerate(ast.parse(source).body):
-        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
-            at, after_docstring = stmt.end_lineno or at, False
-        elif (
-            index == 0
-            and isinstance(stmt, ast.Expr)
-            and isinstance(stmt.value, ast.Constant)
-            and isinstance(stmt.value.value, str)
-        ):
-            at, after_docstring = stmt.end_lineno or at, True
-    source_lines = source.splitlines(keepends=True)
-    head, tail = source_lines[:at], source_lines[at:]
-    if head and not head[-1].endswith("\n"):
-        head[-1] += "\n"
-    block = f"{lines}\n"
-    if after_docstring:
-        block = "\n" + block
-    if not head:
-        block += "\n"
-    return "".join([*head, block, *tail])
+def _add_imports(source: str, tree: ast.Module, imports: Imports, pkg: str) -> str:
+    """``source`` with ``imports`` merged into its imports.
+
+    When the module's imports are one block of plain absolute imports, the block is
+    rewritten in the order ``ruff check``'s isort rules expect. Otherwise the
+    imports ``source`` does not have yet go after its last import, for the
+    project's ruff to sort.
+    """
+    lines = source.splitlines(keepends=True)
+    if lines and not lines[-1].endswith("\n"):
+        lines[-1] += "\n"
+    body = list(tree.body)
+    first = 0
+    if (
+        body
+        and isinstance(body[0], ast.Expr)
+        and isinstance(body[0].value, ast.Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        first = body[0].end_lineno or 0
+        body = body[1:]
+
+    statements = [s for s in body if isinstance(s, (ast.Import, ast.ImportFrom))]
+    existing = _read_imports(statements)
+    leading = body[: len(statements)] == statements
+    if statements and leading:
+        first = statements[0].lineno - 1
+    last = (statements[-1].end_lineno or 0) if statements else first
+    span = "".join(lines[first:last])
+    one_block = (
+        leading
+        and "#" not in span
+        and all(isinstance(s, ast.Import) or s.level == 0 for s in statements)
+    )
+
+    if one_block:
+        existing.update(imports)
+        block = render_imports(pkg, existing)
+    else:
+        missing = Imports(plain=imports.plain - existing.plain)
+        for module, names in imports.from_.items():
+            for name in names - existing.from_.get(module, set()):
+                missing.add_from(module, name)
+        if not missing.plain and not missing.from_:
+            return source
+        block = span.rstrip("\n") + "\n" + render_imports(pkg, missing)
+
+    head, tail = lines[:first], lines[last:]
+    before = "\n" if head and not statements else ""
+    after = "\n" if tail and tail[0].strip() else ""
+    return "".join([*head, before, block.strip("\n") + "\n", after, *tail])
+
+
+def _read_imports(statements: list[ast.Import | ast.ImportFrom]) -> Imports:
+    """``statements`` as ``Imports``; relative imports are left out."""
+    imports = Imports()
+    for stmt in statements:
+        for alias in stmt.names:
+            name = f"{alias.name} as {alias.asname}" if alias.asname else alias.name
+            if isinstance(stmt, ast.Import):
+                imports.plain.add(name)
+            elif stmt.module and stmt.level == 0:
+                imports.add_from(stmt.module, name)
+    return imports
 
 
 def _module(*blocks: str) -> str:

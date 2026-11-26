@@ -127,7 +127,7 @@ async def test_a_type_given_by_its_path_is_imported_into_the_nodes_package() -> 
     assert await ScaffoldNode(fs).run(state) == Outcome.DONE
 
     assert fs.files[INIT_FILE] == (
-        '"""Node package."""\n\nfrom typing import Protocol\n'
+        '"""Node package."""\n\nfrom typing import Protocol\n\n'
         "from demo.board import Board\n\n\n"
         'class HasBoard(Protocol):\n    """A state that has a board field."""\n\n'
         "    board: Board\n"
@@ -201,6 +201,134 @@ async def test_a_path_to_a_name_that_means_something_else_fails() -> None:
 
     assert state.exit_code == 2
     assert fs.files == {INIT_FILE: init}
+
+
+async def test_imports_are_sorted_into_isort_sections_without_ruff() -> None:
+    init = (
+        '"""Node package."""\n\nfrom typing import Protocol\n\n'
+        "from demo.colour import Colour\n\n\n"
+        "class HasColour(Protocol):\n    colour: Colour\n"
+    )
+    fs = FakeFs({INIT_FILE: init})
+    state = MockState(
+        argv=[
+            "count",
+            "--terminal",
+            "--state",
+            "board:demo.board.Board",
+            "--state",
+            "at:datetime.date",
+            "--state",
+            "frame:numpy.ndarray",
+        ]
+    )
+
+    await ScaffoldNode(fs).run(state)
+
+    assert fs.files[INIT_FILE].startswith(
+        '"""Node package."""\n\n'
+        "from datetime import date\nfrom typing import Protocol\n\n"
+        "from numpy import ndarray\n\n"
+        "from demo.board import Board\nfrom demo.colour import Colour\n\n\n"
+        "class HasColour(Protocol):\n    colour: Colour\n\n\n"
+        "class HasBoard(Protocol):\n"
+    )
+
+
+async def test_a_path_through_an_imported_name_is_kept_as_written() -> None:
+    init = (
+        '"""Node package."""\n\nimport datetime\nfrom typing import Protocol\n\n'
+        "from demo import board\n"
+    )
+    fs = FakeFs({INIT_FILE: init})
+    state = MockState(
+        argv=[
+            "count",
+            "--terminal",
+            "--state",
+            "at:datetime.date",
+            "--state",
+            "b:board.Board",
+        ]
+    )
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.DONE
+
+    updated = fs.files[INIT_FILE]
+    assert updated.startswith(init)
+    assert "    at: datetime.date\n" in updated
+    assert "    b: board.Board\n" in updated
+    test = fs.files[TEST_FILE]
+    assert "import datetime\n" in test
+    assert "from demo import board\n" in test
+    assert "    b: board.Board = field(default_factory=board.Board)\n" in test
+
+
+async def test_a_path_through_a_dotted_import_matches_its_protocol() -> None:
+    init = (
+        '"""Node package."""\n\n'
+        "import xml.etree.ElementTree\nfrom typing import Protocol\n\n\n"
+        "class HasTree(Protocol):\n    tree: xml.etree.ElementTree.ElementTree\n"
+    )
+    fs = FakeFs({INIT_FILE: init})
+    state = MockState(
+        argv=[
+            "count",
+            "--terminal",
+            "--state",
+            "tree:xml.etree.ElementTree.ElementTree",
+        ]
+    )
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.DONE
+
+    assert fs.files[INIT_FILE] == init
+    assert "import xml.etree.ElementTree\n" in fs.files[TEST_FILE]
+
+
+async def test_a_type_with_the_name_of_the_node_fails() -> None:
+    fs = FakeFs({INIT_FILE: PKG_INIT})
+    state = MockState(argv=["board", "--terminal", "--state", "board:demo.board.Board"])
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.FAILED
+
+    assert state.exit_code == 2
+    assert fs.files == {INIT_FILE: PKG_INIT}
+    assert "`Board`" in fs.errors[0]
+
+
+async def test_a_quoted_type_fails() -> None:
+    fs = FakeFs({INIT_FILE: PKG_INIT})
+    state = MockState(
+        argv=["count", "--terminal", "--state", "board:'demo.board.Board'"]
+    )
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.FAILED
+
+    assert state.exit_code == 2
+    assert "without quotes" in fs.errors[0]
+
+
+async def test_a_literal_may_hold_strings() -> None:
+    fs = FakeFs({INIT_FILE: PKG_INIT})
+    state = MockState(
+        argv=["count", "--terminal", "--state", "mode:typing.Literal['a', 'b']"]
+    )
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.DONE
+
+    assert "    mode: Literal['a', 'b']\n" in fs.files[INIT_FILE]
+    assert "from typing import Literal, Protocol\n" in fs.files[INIT_FILE]
+
+
+async def test_a_protocol_whose_name_starts_another_is_still_declared() -> None:
+    init = PKG_INIT + "\n\nclass HasCountdown(Protocol):\n    countdown: int\n"
+    fs = FakeFs({INIT_FILE: init})
+    state = MockState(argv=["tick", "--terminal", "--state", "count:int"])
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.DONE
+
+    assert "class HasCount(Protocol):" in fs.files[INIT_FILE]
 
 
 async def test_two_paths_to_the_same_name_fail() -> None:

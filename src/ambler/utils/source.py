@@ -74,7 +74,9 @@ def _origins(tree: ast.Module, here: str) -> Origins:
                 origins[alias.asname or alias.name] = (stmt.module, alias.name)
         elif isinstance(stmt, ast.Import):
             for alias in stmt.names:
-                origins[alias.asname or alias.name] = (None, alias.name)
+                # ``import a.b`` binds ``a``; ``import a.b as c`` binds ``c``.
+                bound = alias.asname or alias.name.split(".")[0]
+                origins[bound] = (None, alias.name)
         elif isinstance(stmt, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
             origins[stmt.name] = (here, stmt.name)
         elif isinstance(stmt, (ast.Assign, ast.AnnAssign, ast.TypeAlias)):
@@ -99,7 +101,10 @@ def _imports_for(names: set[str], origins: Origins) -> Imports:
             continue
         module, original = origin
         if module is None:
-            imports.plain.add(original)
+            if original.split(".")[0] == name:
+                imports.plain.add(original)
+            else:
+                imports.plain.add(f"{original} as {name}")
         elif original == name:
             imports.add_from(module, name)
         else:
@@ -151,17 +156,38 @@ def resolve_type(
     """``type_text`` with every ``a.b.Type`` path shortened to ``Type``, as
     ``ast.unparse`` writes it, and the imports it needs in the nodes package.
 
-    ``origins`` are the names the nodes package already binds.
+    ``origins`` are the names the nodes package already binds. A path that starts
+    with one of them, such as ``datetime.date`` after ``import datetime``, is
+    already usable there and is kept as written.
 
     Raises:
-        ValueError: if ``type_text`` is not an expression, uses a name that is not a
-            builtin, not given by its path and not bound in ``origins``, or shortens a
-            path to a name ``origins`` binds to something else.
+        ValueError: if ``type_text`` is not an expression, is or contains a quoted
+            type, uses a name that is not a builtin, not given by its path and not
+            bound in ``origins``, or shortens a path to a name ``origins`` binds to
+            something else.
     """
     try:
         tree = ast.parse(type_text, mode="eval")
     except SyntaxError as e:
         raise ValueError(f"`{type_text}` is not a type for `{field_name}`") from e
+
+    literals = {
+        id(constant)
+        for sub in ast.walk(tree)
+        if isinstance(sub, ast.Subscript)
+        and (_dotted(sub.value) or [""])[-1] == "Literal"
+        for constant in ast.walk(sub.slice)
+    }
+    for sub in ast.walk(tree):
+        if (
+            isinstance(sub, ast.Constant)
+            and isinstance(sub.value, str)
+            and id(sub) not in literals
+        ):
+            raise ValueError(
+                f"`{type_text}` quotes a type: give `--state {field_name}` "
+                "the type without quotes, so its path can be imported"
+            )
 
     imports = Imports()
 
@@ -170,6 +196,8 @@ def resolve_type(
             path = _dotted(node)
             if path is None:
                 self.generic_visit(node)
+                return node
+            if path[0] in origins:
                 return node
             module, name = ".".join(path[:-1]), path[-1]
             bound = origins.get(name)

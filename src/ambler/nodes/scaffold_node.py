@@ -94,6 +94,18 @@ class ScaffoldNode:
         except (SourceError, ValueError) as e:
             return self._fail(state, 2, f"Error: {e}")
         cls_name = to_pascal(name)
+        taken = {cls_name, "dataclass", "field"} | (
+            set[str]() if terminal else {"Outcome"}
+        )
+        clash = sorted(_bound_names(imports) & taken)
+        if clash:
+            return self._fail(
+                state,
+                2,
+                f"Error: the type of a --state field needs `{clash[0]}`, which the "
+                f"test of {name} already imports for itself: give the node another "
+                "name, or the type another name in nodes/__init__.py",
+            )
 
         self.utils.mkdir(nodes_dir)
         self.utils.mkdir(tests_dir)
@@ -139,6 +151,16 @@ class ScaffoldNode:
         self.utils.print_error(message)
         state.exit_code = code
         return Outcome.FAILED
+
+
+def _bound_names(imports: Imports) -> set[str]:
+    """The names ``imports`` bind in the module that has them."""
+    names = {
+        name.split(" as ")[-1] for group in imports.from_.values() for name in group
+    }
+    for module in imports.plain:
+        names.add(module.split(" as ")[1] if " as " in module else module.split(".")[0])
+    return names
 
 
 def _resolve_state_fields(
