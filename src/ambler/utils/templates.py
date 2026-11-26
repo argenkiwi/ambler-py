@@ -147,8 +147,10 @@ def render_node_test(
     fallible: bool,
     outcomes: list[str],
     state_fields: list[StateField],
+    imports: Imports | None = None,
 ) -> str:
-    imports = [cls_name] if terminal else [cls_name, "Outcome"]
+    """The node's test. ``imports`` are what the state fields' types need."""
+    names = [cls_name] if terminal else [cls_name, "Outcome"]
     fields = "\n".join(
         f"    {fn}: {ft} = {state_default(ft)}" for fn, ft in state_fields
     )
@@ -169,15 +171,17 @@ def render_node_test(
             for out in outcomes
         ]
 
+    needed = Imports()
+    needed.add_from("dataclasses", "dataclass")
+    if "field(" in fields:
+        needed.add_from("dataclasses", "field")
+    for imported in names:
+        needed.add_from(f"{pkg}.nodes.{name}", imported)
+    if imports is not None:
+        needed.update(imports)
+
     return _module(
-        _imports(
-            [
-                "from dataclasses import dataclass, field"
-                if "field(" in fields
-                else "from dataclasses import dataclass"
-            ],
-            [f"from {pkg}.nodes.{name} import {_names(imports)}"],
-        ),
+        render_imports(pkg, needed),
         mock_state,
         '''class MockUtils:
     """Fakes every side effect of the node."""''',

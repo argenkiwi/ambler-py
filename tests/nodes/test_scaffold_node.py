@@ -51,12 +51,70 @@ async def test_existing_protocol_is_not_declared_twice() -> None:
     assert fs.files[INIT_FILE] == init
 
 
-async def test_state_type_defaults_to_object_and_fallible_adds_error() -> None:
+async def test_fallible_adds_error() -> None:
     fs = FakeFs()
-    state = MockState(argv=["count", "--terminal", "--fallible", "--state", "x"])
+    state = MockState(argv=["count", "--terminal", "--fallible", "--state", "x:int"])
     await ScaffoldNode(fs).run(state)
-    assert "x: object" in fs.files[INIT_FILE]
     assert "class Error(Exception)" in fs.files[NODE_FILE]
+
+
+async def test_a_reused_field_takes_its_type_from_the_existing_protocol() -> None:
+    init = (
+        '"""Node package."""\n\nfrom typing import Protocol\n\n\n'
+        "class HasName(Protocol):\n    name: str\n"
+    )
+    fs = FakeFs({INIT_FILE: init})
+    state = MockState(argv=["count", "--terminal", "--state", "name"])
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.DONE
+
+    assert fs.files[INIT_FILE] == init
+    assert "from demo.nodes import HasName" in fs.files[NODE_FILE]
+    assert '    name: str = ""\n' in fs.files[TEST_FILE]
+    assert "object" not in fs.files[TEST_FILE]
+
+
+async def test_a_reused_field_brings_the_imports_its_type_needs() -> None:
+    init = (
+        '"""Node package."""\n\n'
+        "from pathlib import Path\nfrom typing import Protocol\n\n\n"
+        "class HasPath(Protocol):\n    path: Path\n"
+    )
+    fs = FakeFs({INIT_FILE: init})
+    state = MockState(argv=["count", "--terminal", "--state", "path"])
+
+    await ScaffoldNode(fs).run(state)
+
+    test = fs.files[TEST_FILE]
+    assert (
+        "from dataclasses import dataclass, field\nfrom pathlib import Path\n" in test
+    )
+    assert "    path: Path = field(default_factory=Path)\n" in test
+
+
+async def test_a_field_without_a_type_and_no_protocol_fails_with_exit_code_2() -> None:
+    fs = FakeFs()
+    state = MockState(argv=["count", "--terminal", "--state", "x"])
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.FAILED
+
+    assert state.exit_code == 2
+    assert fs.files == {}
+    assert "--state x:<Type>" in fs.errors[0]
+
+
+async def test_a_different_type_from_the_protocol_fails_with_exit_code_2() -> None:
+    init = (
+        "from typing import Protocol\n\n\nclass HasCount(Protocol):\n    count: int\n"
+    )
+    fs = FakeFs({INIT_FILE: init})
+    state = MockState(argv=["count", "--terminal", "--state", "count:str"])
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.FAILED
+
+    assert state.exit_code == 2
+    assert fs.files == {INIT_FILE: init}
+    assert "int" in fs.errors[0] and "str" in fs.errors[0]
 
 
 async def test_existing_node_fails_with_exit_code_1() -> None:
