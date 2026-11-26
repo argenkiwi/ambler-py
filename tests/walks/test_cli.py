@@ -23,6 +23,9 @@ class Recorder:
     def print_error(self, message: str) -> None:
         self.errors.append(message)
 
+    def sources(self) -> dict[str, str]:
+        return {}
+
     def run(self, cmd: list[str]) -> int:
         self.ran.append(cmd)
         return 0

@@ -14,9 +14,18 @@ class MockState:
     exit_code: int = 0
 
 
+NOT_IMPLEMENTED = "not yet " + "implemented"
+UNFINISHED = f'def run() -> None:\n    raise NotImplementedError("{NOT_IMPLEMENTED}")\n'
+
+
 class MockUtils:
-    def __init__(self, codes: dict[str, int] | None = None) -> None:
+    def __init__(
+        self,
+        codes: dict[str, int] | None = None,
+        sources: dict[str, str] | None = None,
+    ) -> None:
         self.codes = codes or {}
+        self.files = sources or {}
         self.ran: list[str] = []
         self.out: list[str] = []
         self.errors: list[str] = []
@@ -25,6 +34,9 @@ class MockUtils:
         step = " ".join(cmd)
         self.ran.append(step)
         return self.codes.get(step, 0)
+
+    def sources(self) -> dict[str, str]:
+        return self.files
 
     def print(self, message: str) -> None:
         self.out.append(message)
@@ -74,3 +86,34 @@ async def test_unknown_option_is_a_usage_error() -> None:
     assert await RunChecks(utils).run(state) == Outcome.FAILED
     assert state.exit_code == 2
     assert utils.ran == []
+
+
+async def test_a_placeholder_left_fails_before_any_tool_runs() -> None:
+    for argv in ([], ["--lint-only"]):
+        utils = MockUtils(
+            sources={
+                "src/demo/nodes/greet.py": UNFINISHED,
+                "tests/walks/test_hello.py": "x = 1\n" + UNFINISHED,
+                "src/demo/nodes/bye.py": "def run() -> None:\n    pass\n",
+            }
+        )
+        state = MockState(argv=argv)
+
+        assert await RunChecks(utils).run(state) == Outcome.FAILED
+
+        assert utils.ran == []
+        assert [line.split(": todo: ")[0] for line in utils.out] == [
+            "src/demo/nodes/greet.py:2",
+            "tests/walks/test_hello.py:3",
+        ]
+        assert utils.errors == ["Check failed: 2 convention violations"]
+        assert state.exit_code == 1
+
+
+async def test_a_finished_project_goes_on_to_the_tools() -> None:
+    utils = MockUtils(
+        sources={"src/demo/nodes/bye.py": "def run() -> None:\n    pass\n"}
+    )
+
+    assert await RunChecks(utils).run(MockState()) == Outcome.DONE
+    assert utils.ran == [FORMAT, LINT, TYPES, TESTS]

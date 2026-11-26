@@ -6,7 +6,7 @@ Run it from the project root when the work is done. It checks the structural con
 
     <path>:<line>: <rule>: <what to do>
 
-If there are none, it runs `uv run ruff format --check`, `uv run ruff check`, `uv run pyright` and `uv run pytest`, stopping at the first that fails. `--lint-only` skips those. It exits 1 if anything failed. Run `uv sync` first.
+If there are none, it runs `uv run ruff format --check`, `uv run ruff check`, `uv run pyright` and `uv run pytest`, stopping at the first that fails. `--lint-only` skips `pytest`. It exits 1 if anything failed. Run `uv sync` first.
 
 ## Rules
 
