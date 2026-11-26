@@ -34,7 +34,8 @@ The native Ambler Tooling Protocol (ATP) command-line tool, run as `uv run amble
 
 ### RunChecks
 - Usage: `check [--lint-only]`.
-- Runs `uv run ruff format --check .`, `uv run ruff check .`, `uv run pyright` and, unless `--lint-only`, `uv run pytest`, stopping at the first failure. A `pytest` exit code of 5 (no tests collected) is not a failure.
+- First checks the conventions of the project's nodes, walks and utilities (`src/<pkg>/nodes`, `walks`, `utils`) and its tests (`tests/`), printing one line per violation as `<path>:<line>: <rule>: <what to do>`. The one rule so far is `todo`: no placeholder the scaffolders write is left, that is no `raise NotImplementedError("not yet implemented")` and no `raise NotImplementedError("not yet wired: …")`. A file that does not parse is left to the tools. If there are violations, it prints how many, sets exit code 1 and halts, with or without `--lint-only`.
+- Then runs `uv run ruff format --check .`, `uv run ruff check .`, `uv run pyright` and, unless `--lint-only`, `uv run pytest`, stopping at the first failure. A `pytest` exit code of 5 (no tests collected) is not a failure.
 - On failure prints the failed step, sets the exit code to the step's exit code and halts.
 - If all pass, prints a success message and halts.
 
