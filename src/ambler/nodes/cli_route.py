@@ -37,7 +37,7 @@ class CliRoute:
                 return Outcome.UTIL
             case "check":
                 return Outcome.CHECK
-            case "--help" | "-h":
+            case "help" | "--help" | "-h":
                 state.exit_code = 0
                 return Outcome.HELP
             case None:

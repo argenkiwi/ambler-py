@@ -49,13 +49,26 @@ async def run(argv: list[str]) -> tuple[State, Recorder, FakeFs]:
 async def test_no_command_prints_help_and_exits_2() -> None:
     state, rec, _ = await run([])
     assert state.exit_code == 2
-    assert "Usage: ambler" in rec.out[0]
+    assert "Usage: uv run ambler" in rec.out[0]
 
 
 async def test_help_flag_exits_0() -> None:
     state, rec, _ = await run(["--help"])
     assert state.exit_code == 0
-    assert "Usage: ambler" in rec.out[0]
+    assert "Usage: uv run ambler" in rec.out[0]
+
+
+async def test_help_prints_a_topic() -> None:
+    state, rec, _ = await run(["help", "walk"])
+    assert state.exit_code == 0
+    assert rec.out[0].startswith("# uv run ambler walk")
+
+
+async def test_help_for_an_unknown_topic_exits_1() -> None:
+    state, rec, _ = await run(["help", "bogus"])
+    assert state.exit_code == 1
+    assert rec.out == []
+    assert rec.errors[0].startswith("No guide for bogus")
 
 
 async def test_unknown_command_is_reported_and_exits_2() -> None:

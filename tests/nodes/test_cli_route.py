@@ -32,11 +32,18 @@ async def test_routes_the_command_and_leaves_the_options(
     assert state.exit_code == 0
 
 
-@pytest.mark.parametrize("flag", ["--help", "-h"])
+@pytest.mark.parametrize("flag", ["help", "--help", "-h"])
 async def test_help_flag_shows_help_with_exit_code_0(flag: str) -> None:
     state = MockState(argv=[flag], exit_code=9)
     assert await CliRoute().run(state) == Outcome.HELP
     assert state.exit_code == 0
+
+
+async def test_help_leaves_the_topic_in_argv() -> None:
+    state = MockState(argv=["help", "walk"])
+    assert await CliRoute().run(state) == Outcome.HELP
+    assert state.command == "help"
+    assert state.argv == ["walk"]
 
 
 async def test_no_command_shows_help_with_exit_code_2() -> None:

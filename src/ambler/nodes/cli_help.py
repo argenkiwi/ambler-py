@@ -1,7 +1,11 @@
+import sys
 from dataclasses import dataclass, field
 from typing import Protocol
 
-USAGE = """Usage: ambler <command> [options]
+from ambler.guides import TOPICS, guide
+from ambler.nodes import HasArgv, HasCommand, HasExitCode
+
+USAGE = """Usage: uv run ambler <command> [options]
 
 Ambler Python Tooling
 
@@ -13,25 +17,44 @@ Commands:
   util <name>    Create a utility module
   check [--lint-only]
                  Verify conventions, lint, format, and tests
+  help [topic]   Print the guide for a topic, or the general guide
 
 Options:
   -h, --help     Show this help message"""
 
 
+class State(HasArgv, HasCommand, HasExitCode, Protocol):
+    pass
+
+
 class Utils(Protocol):
     def print(self, message: str) -> None: ...
+
+    def print_error(self, message: str) -> None: ...
 
 
 class SystemUtils:
     def print(self, message: str) -> None:
         print(message)
 
+    def print_error(self, message: str) -> None:
+        print(message, file=sys.stderr)
+
 
 @dataclass(frozen=True)
 class CliHelp:
-    """Prints the usage text."""
+    """Prints a guide for ``help [topic]``, or the usage text otherwise."""
 
     utils: Utils = field(default_factory=SystemUtils)
 
-    async def run(self, state: object) -> None:
-        self.utils.print(USAGE)
+    async def run(self, state: State) -> None:
+        if state.command != "help":
+            self.utils.print(USAGE)
+            return
+        topic = state.argv[0] if state.argv else None
+        text = guide(topic)
+        if text is None:
+            self.utils.print_error(f"No guide for {topic}. Topics: {', '.join(TOPICS)}")
+            state.exit_code = 1
+            return
+        self.utils.print(text)
