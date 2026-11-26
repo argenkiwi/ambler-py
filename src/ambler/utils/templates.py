@@ -1,6 +1,10 @@
 """Pure source-code templates for the scaffolding nodes."""
 
+import re
+import sys
+
 from ambler.utils.naming import to_pascal, to_shout
+from ambler.utils.source import Imports, NodeInfo
 
 NOT_IMPLEMENTED_MARKER = f"{'not yet'} {'implemented'}"
 
@@ -45,8 +49,33 @@ def _imports(stdlib: list[str], first_party: list[str]) -> str:
     return "\n\n".join("\n".join(group) for group in groups if group)
 
 
-def _names(names: list[str]) -> str:
-    return ", ".join(sorted(names))
+def _type_order(name: str) -> tuple[int, str]:
+    """isort's order within a from-import: constants, then classes, then the rest."""
+    base = name.split(" as ")[0]
+    kind = 0 if base.isupper() and len(base) > 1 else 1 if base[:1].isupper() else 2
+    return kind, base.lower()
+
+
+def _names(names: list[str] | set[str]) -> str:
+    return ", ".join(sorted(names, key=_type_order))
+
+
+def _section(module: str, pkg: str) -> int:
+    top = module.split(".")[0]
+    if top == pkg:
+        return 2
+    return 0 if top in sys.stdlib_module_names or top == "__future__" else 1
+
+
+def render_imports(pkg: str, imports: Imports) -> str:
+    """``imports`` as the standard library, third-party and package sections."""
+    sections: list[list[str]] = [[], [], []]
+    for module in sorted(imports.plain):
+        sections[_section(module, pkg)].append(f"import {module}")
+    for module in sorted(imports.from_):
+        line = f"from {module} import {_names(imports.from_[module])}"
+        sections[_section(module, pkg)].append(line)
+    return "\n\n".join("\n".join(section) for section in sections if section)
 
 
 def render_node(
@@ -109,10 +138,6 @@ class {cls_name}:
     )
 
 
-def _default(field_type: str) -> str:
-    return {"int": "0", "str": '""', "bool": "False"}.get(field_type, "None")
-
-
 def render_node_test(
     pkg: str,
     name: str,
@@ -124,7 +149,9 @@ def render_node_test(
     state_fields: list[StateField],
 ) -> str:
     imports = [cls_name] if terminal else [cls_name, "Outcome"]
-    fields = "\n".join(f"    {fn}: {ft} = {_default(ft)}" for fn, ft in state_fields)
+    fields = "\n".join(
+        f"    {fn}: {ft} = {state_default(ft)}" for fn, ft in state_fields
+    )
     mock_state = f"@dataclass\nclass MockState:\n{fields or '    pass'}"
 
     if terminal:
@@ -144,7 +171,11 @@ def render_node_test(
 
     return _module(
         _imports(
-            ["from dataclasses import dataclass"],
+            [
+                "from dataclasses import dataclass, field"
+                if "field(" in fields
+                else "from dataclasses import dataclass"
+            ],
             [f"from {pkg}.nodes.{name} import {_names(imports)}"],
         ),
         mock_state,
@@ -154,76 +185,208 @@ def render_node_test(
     )
 
 
+Edges = dict[tuple[str, str], str]
+"""Where each ``(node, OUTCOME)`` leads: a node, or ``halt``."""
+
+
+def state_default(field_type: str) -> str:
+    """A default for a ``State`` field of ``field_type``."""
+    simple = {"int": "0", "float": "0.0", "str": '""', "bool": "False", "bytes": 'b""'}
+    if field_type in simple:
+        return simple[field_type]
+    if re.search(r"(^|\|)\s*None\s*($|\|)", field_type) or field_type.startswith(
+        "Optional["
+    ):
+        return "None"
+    return f"field(default_factory={field_type})"
+
+
+def _title(name: str) -> str:
+    return " ".join(part.capitalize() for part in name.split("_") if part)
+
+
+def _arm(node: NodeInfo, edges: Edges) -> str:
+    head = f"            case Id.{to_shout(node.name)}:"
+    if node.outcomes is None:
+        run = f"                await self.{node.name}.run(state)"
+        return f"{head}\n{run}\n                return None"
+    lines = [head, f"                match await self.{node.name}.run(state):"]
+    for outcome in node.outcomes:
+        lines.append(f"                    case {node.name}.Outcome.{outcome}:")
+        target = edges.get((node.name, outcome))
+        if target is None:
+            wire = f"{to_shout(node.name)}.{outcome}"
+            lines.append(
+                f'{" " * 24}raise NotImplementedError("not yet wired: {wire}")'
+            )
+        elif target == "halt":
+            lines.append("                        return None")
+        else:
+            lines.append(f"                        return Id.{to_shout(target)}")
+    return "\n".join(lines)
+
+
 def render_walk(
-    pkg: str, name: str, cls_name: str, node_names: list[str], edges: list[Edge]
+    pkg: str,
+    name: str,
+    cls_name: str,
+    nodes: list[NodeInfo],
+    edges: Edges,
+    fields: list[StateField],
+    field_imports: Imports,
 ) -> str:
-    first_party = [f"from {pkg} import Walk"] + [
-        f"from {pkg}.nodes.{n} import {to_pascal(n)}" for n in node_names
-    ]
-    ids = "\n".join(f"    {to_shout(n)} = auto()" for n in node_names)
-    fields = "\n".join(
-        f"    {n}: {to_pascal(n)} = field(default_factory={to_pascal(n)})"
-        for n in node_names
+    fallible = [node for node in nodes if node.fallible]
+    imports = Imports(plain={"asyncio"})
+    if fallible:
+        imports.plain.add("sys")
+    for module, names in (("dataclasses", "dataclass field"), ("enum", "Enum auto")):
+        for imported in names.split():
+            imports.add_from(module, imported)
+    imports.add_from(f"{pkg}.engine", "Walk")
+    for node in nodes:
+        if node.outcomes is not None or node.fallible:
+            imports.add_from(f"{pkg}.nodes", node.name)
+        imports.add_from(f"{pkg}.nodes.{node.name}", node.cls_name)
+    imports.update(field_imports)
+
+    exported = ["Error", "main", "run"] if fallible else ["main", "run"]
+    surface = "__all__ = [" + ", ".join(f'"{e}"' for e in exported) + "]"
+    if fallible:
+        errors = [f"{node.name}.Error" for node in fallible]
+        value = errors[0] if len(errors) == 1 else f"({', '.join(errors)})"
+        surface += f'\n\nError = {value}\n"""What can stop the walk early."""'
+
+    state = "\n".join(f"    {f}: {t} = {state_default(t)}" for f, t in fields)
+    ids = "\n".join(f"    {to_shout(node.name)} = auto()" for node in nodes)
+    members = "\n".join(
+        f"    {node.name}: {node.cls_name} = field(default_factory={node.cls_name})"
+        for node in nodes
+    )
+    arms = "\n".join(_arm(node, edges) for node in nodes)
+    start = f"Id.{to_shout(nodes[0].name)}"
+    reported = (
+        "    try:\n        asyncio.run(run())\n    except Error as e:\n"
+        '        sys.exit(f"Error: {e}")'
+        if fallible
+        else "    asyncio.run(run())"
     )
 
-    arms: list[str] = []
-    for n in node_names:
-        arms.append(f"            case Id.{to_shout(n)}:")
-        matched_edges = [edge for edge in edges if edge[0] == n]
-        if matched_edges:
-            arms.append(f"                match await self.{n}.run(state):")
-            for _, outcome, tgt in matched_edges:
-                tgt_return = f"Id.{to_shout(tgt)}" if tgt.lower() != "halt" else "None"
-                arms.append(
-                    f"                    case {to_pascal(n)}.Outcome.{outcome}:"
-                )
-                arms.append(f"                        return {tgt_return}")
-        else:
-            arms.append(f"                # Wire outcomes for {n}")
-            arms.append(f"                await self.{n}.run(state)")
-            arms.append("                return None")
-    step = "\n".join(arms)
-
     return _module(
-        '"""Walk implementation."""\n\n'
-        + _imports(
-            ["from dataclasses import dataclass, field", "from enum import Enum, auto"],
-            first_party,
-        ),
-        "@dataclass\nclass State:\n    pass",
+        f'"""The {name} walk: see ``specs/{name}.md``."""\n\n'
+        + render_imports(pkg, imports),
+        surface,
+        f"@dataclass\nclass State:\n{state or '    pass'}",
         f"class Id(Enum):\n{ids}",
         f"""@dataclass(frozen=True)
 class {cls_name}(Walk[Id, State]):
-{fields}
+{members}
 
     async def step(self, id: Id, state: State) -> Id | None:
         match id:
-{step}""",
+{arms}""",
         f'''async def run() -> None:
-    """Runs the {name} walk."""
-    await {cls_name}().run(Id.{to_shout(node_names[0])}, State())''',
+    """Runs the walk from its first node."""
+    await {cls_name}().run({start}, State())''',
+        f'''def main() -> None:
+    """Runs the walk: the ``{name}`` script in pyproject.toml."""
+{reported}''',
     )
 
 
-def render_walk_test(pkg: str, name: str, cls_name: str, first_node: str) -> str:
+def render_walk_test(pkg: str, name: str, cls_name: str, nodes: list[NodeInfo]) -> str:
+    imports = Imports()
+    methods: dict[str, str] = {}
+    for node in nodes:
+        imports.add_from(f"{pkg}.nodes.{node.name}", node.cls_name)
+        imports.update(node.imports)
+        for method in node.utils:
+            match = re.search(r"def (\w+)", method)
+            if match:
+                methods.setdefault(match.group(1), method)
+    for exported in (cls_name, "Id", "State"):
+        imports.add_from(f"{pkg}.walks.{name}", exported)
+
+    script = '''class Script:
+    """Stands in for every node's utils: plays back inputs and records effects."""'''
+    if methods:
+        script += "\n\n" + "\n\n".join(methods.values())
+    walk = ", ".join(f"{node.name}={node.cls_name}(script)" for node in nodes)
+    first = nodes[0].name
+
     return _module(
-        f"from {pkg}.walks.{name} import {_names([cls_name, 'Id', 'State'])}",
-        f"""async def test_{name}_walk_initial_step() -> None:
-    walk = {cls_name}()
+        f'"""The wiring of the {name} walk: one test per path through it."""\n\n'
+        + render_imports(pkg, imports),
+        script,
+        f"""async def test_{name}_walks_from_{first}() -> None:
+    script = Script()
     state = State()
-    next_id = await walk.step(Id.{to_shout(first_node)}, state)
-    assert next_id is None or isinstance(next_id, Id)""",
+
+    await {cls_name}({walk}).run(Id.{to_shout(first)}, state)
+
+    raise NotImplementedError("{NOT_IMPLEMENTED_MARKER}")""",
     )
 
 
-def render_walk_spec(cls_name: str, node_names: list[str]) -> str:
-    return f"""# {cls_name} Walk Specification
+def render_walk_spec(
+    name: str, nodes: list[NodeInfo], edges: Edges, fields: list[StateField]
+) -> str:
+    sections: list[str] = []
+    for index, node in enumerate(nodes):
+        lines = [f"### {_title(node.name)}"]
+        if index == 0:
+            lines.append("- Initial node.")
+        lines.append("- <What it does.>")
+        if node.outcomes is None:
+            lines.append("- Terminates.")
+        for outcome in node.outcomes or ():
+            target = edges.get((node.name, outcome))
+            if target is None:
+                lines.append(f"- If `{outcome}`, <where it leads: not wired yet>.")
+            elif target == "halt":
+                lines.append(f"- If `{outcome}`, it terminates.")
+            else:
+                lines.append(
+                    f"- If `{outcome}`, it transitions to `{to_shout(target)}`."
+                )
+        sections.append("\n".join(lines))
+    state = "\n".join(f"- `{f}`: <what it holds>." for f, _ in fields)
+    return (
+        "# Program Specifications\n\n"
+        f"<What the {name} walk is for, in a sentence or two.>\n\n"
+        "## Nodes\n\n"
+        + "\n\n".join(sections)
+        + "\n\n## Shared State\n\n"
+        + (
+            f"The shared state consists of:\n{state}\n"
+            if state
+            else "The shared state is empty.\n"
+        )
+    )
 
-Initial node: `{node_names[0]}`.
 
-## Flow
-{" -> ".join(node_names)}
-"""
+def add_script(pyproject: str, name: str, target: str) -> str | None:
+    """``pyproject`` with a ``name`` script running ``target`` in ``[project.scripts]``,
+    in alphabetical order, or ``None`` if there is already a script called ``name``."""
+    entry = f'{name} = "{target}"\n'
+    lines = pyproject.splitlines(keepends=True)
+    header = next(
+        (i for i, line in enumerate(lines) if line.strip() == "[project.scripts]"), None
+    )
+    if header is None:
+        return pyproject.rstrip("\n") + f"\n\n[project.scripts]\n{entry}"
+    at = header + 1
+    for i in range(header + 1, len(lines)):
+        line = lines[i].strip()
+        if line.startswith("["):
+            break
+        if "=" not in line:
+            continue
+        key = line.split("=", 1)[0].strip().strip('"')
+        if key == name:
+            return None
+        if key < name:
+            at = i + 1
+    return "".join([*lines[:at], entry, *lines[at:]])
 
 
 def render_util(name: str, cls_name: str) -> str:

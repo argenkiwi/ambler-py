@@ -1,24 +1,26 @@
-"""The scaffolded files pass a generated project's own ``ruff`` checks as written.
+"""What the scaffolders write passes a generated project's own checks.
 
-``ambler check`` runs ``ruff format --check`` and ``ruff check`` before anything
-else, so code the CLI writes must already be formatted and lint-clean.
+``ambler check`` runs ``ruff format --check``, ``ruff check`` and ``pyright`` before
+the tests, so nodes, their tests, walks and their wiring tests must pass all three
+as written: unfinished, but formatted, lint-clean and well typed.
 """
 
+import inspect
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
+import ambler
+from ambler.nodes.scaffold_walk import Outcome, ScaffoldWalk
+from ambler.utils.fs import SystemScaffoldUtils
 from ambler.utils.templates import (
-    PACKAGE_INIT,
     StateField,
     render_node,
     render_node_test,
     render_protocols,
     render_util,
-    render_walk,
-    render_walk_test,
 )
 
 PKG = "demo_app"
@@ -30,7 +32,15 @@ requires-python = ">=3.12"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.pyright]
+include = ["src", "tests"]
+extraPaths = ["src"]
+typeCheckingMode = "strict"
+reportMatchNotExhaustive = true
 """
+
+INIT = '"""Node package."""\n\nfrom pathlib import Path\nfrom typing import Protocol\n'
 
 NODES: dict[str, dict[str, object]] = {
     "greet": {
@@ -49,7 +59,7 @@ NODES: dict[str, dict[str, object]] = {
         "terminal": False,
         "fallible": False,
         "outcomes": ["AGAIN", "FINISHED"],
-        "state_fields": [("count", "int"), ("done", "bool")],
+        "state_fields": [("count", "int"), ("log", "list[str]"), ("path", "Path")],
     },
     "tick": {
         "terminal": True,
@@ -59,51 +69,79 @@ NODES: dict[str, dict[str, object]] = {
     },
 }
 
+UTILS = '''class Utils(Protocol):
+    """The side effects this node needs: one method each, faked in the tests."""'''
 
-def _project(tmp_path: Path) -> Path:
-    """A generated project holding one file from every template."""
-    (tmp_path / "pyproject.toml").write_text(PYPROJECT)
-    src = tmp_path / "src" / PKG
-    tests = tmp_path / "tests"
-    for folder in (
-        src / "nodes",
-        src / "walks",
-        src / "utils",
-        tests / "nodes",
-        tests / "walks",
-    ):
+SLEEP = (
+    UTILS
+    + "\n\n    async def sleep(self, duration: timedelta) -> None: ...\n\n"
+    + '    def heads(self) -> bool:\n        """Flips a coin."""\n        ...'
+)
+
+
+SYSTEM = '''class SystemUtils:
+    """The real side effects."""'''
+
+MOCK = '''class MockUtils:
+    """Fakes every side effect of the node."""'''
+
+IMPLEMENTED = (
+    "\n\n    async def sleep(self, duration: timedelta) -> None:\n        pass\n\n"
+    "    def heads(self) -> bool:\n        return True"
+)
+
+
+def _node(name: str, spec: dict[str, object]) -> str:
+    source = render_node(PKG, name.capitalize(), **spec)  # type: ignore[arg-type]
+    if name == "count":
+        source = (
+            source.replace(
+                "from dataclasses import dataclass, field\n",
+                "from dataclasses import dataclass, field\n"
+                "from datetime import timedelta\n",
+            )
+            .replace(UTILS, SLEEP)
+            .replace(SYSTEM, SYSTEM + IMPLEMENTED)
+        )
+    return source
+
+
+def _node_test(name: str, spec: dict[str, object]) -> str:
+    source = render_node_test(PKG, name, name.capitalize(), **spec)  # type: ignore[arg-type]
+    if name == "count":
+        # A type the node scaffold cannot import for you; the developer adds it.
+        source = source.replace(
+            "from dataclasses import dataclass, field\n",
+            "from dataclasses import dataclass, field\nfrom datetime import timedelta\n"
+            "from pathlib import Path\n",
+        ).replace(MOCK, MOCK + IMPLEMENTED)
+    return source
+
+
+def _project(root: Path) -> None:
+    """A generated project with a node from every variant of the node template."""
+    (root / "pyproject.toml").write_text(PYPROJECT)
+    src = root / "src" / PKG
+    tests = root / "tests"
+    for folder in (src / "nodes", src / "walks", src / "utils", tests / "nodes"):
         folder.mkdir(parents=True)
     (src / "__init__.py").write_text('"""Demo."""\n')
+    (src / "engine.py").write_text(inspect.getsource(ambler))
     fields: list[StateField] = [
         field
         for spec in NODES.values()
         for field in spec["state_fields"]  # type: ignore[union-attr]
     ]
-    (src / "nodes" / "__init__.py").write_text(render_protocols(PACKAGE_INIT, fields))
+    (src / "nodes" / "__init__.py").write_text(render_protocols(INIT, fields))
     for name, spec in NODES.items():
-        cls_name = name.capitalize()
-        (src / "nodes" / f"{name}.py").write_text(
-            render_node(PKG, cls_name, **spec)  # type: ignore[arg-type]
-        )
-        (tests / "nodes" / f"test_{name}.py").write_text(
-            render_node_test(PKG, name, cls_name, **spec)  # type: ignore[arg-type]
-        )
-    (src / "walks" / "hello.py").write_text(
-        render_walk(PKG, "hello", "Hello", ["greet", "bye"], [("greet", "DONE", "bye")])
-    )
-    (src / "walks" / "loop.py").write_text(
-        render_walk(PKG, "loop", "Loop", ["count", "tick"], [])
-    )
-    (tests / "walks" / "test_hello.py").write_text(
-        render_walk_test(PKG, "hello", "Hello", "greet")
-    )
+        (src / "nodes" / f"{name}.py").write_text(_node(name, spec))
+        (tests / "nodes" / f"test_{name}.py").write_text(_node_test(name, spec))
     (src / "utils" / "journal.py").write_text(render_util("journal", "Journal"))
-    return tmp_path
 
 
-def _ruff(project: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _run(project: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        [sys.executable, "-m", "ruff", *args],
+        [sys.executable, "-m", *args],
         cwd=project,
         capture_output=True,
         text=True,
@@ -111,13 +149,54 @@ def _ruff(project: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+@pytest.fixture(scope="module")
+def project(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The project, with a walk wired completely and one left unwired."""
+    root = tmp_path_factory.mktemp("project")
+    _project(root)
+    walks = [
+        ["hello", "--nodes", "greet,bye", "--edge", "greet.done=bye"],
+        ["loop", "--nodes", "count,tick", "--edge", "count.again=count"],
+    ]
+
+    async def scaffold() -> None:
+        class Here(SystemScaffoldUtils):
+            def root(self) -> Path:
+                return root
+
+        for argv in walks:
+            state = _State(argv)
+            assert await ScaffoldWalk(Here()).run(state) == Outcome.DONE
+
+    import asyncio
+
+    asyncio.run(scaffold())
+    return root
+
+
+class _State:
+    def __init__(self, argv: list[str]) -> None:
+        self.argv = argv
+        self.exit_code = 0
+
+
 @pytest.mark.parametrize(
     "args",
-    [("format", "--check", "--diff", "."), ("check", ".")],
-    ids=["format", "lint"],
+    [
+        ("ruff", "format", "--check", "--diff", "."),
+        ("ruff", "check", "."),
+        ("pyright",),
+    ],
+    ids=["format", "lint", "types"],
 )
-def test_scaffolded_files_pass_the_projects_ruff_checks(
-    tmp_path: Path, args: tuple[str, ...]
+def test_scaffolded_files_pass_the_projects_checks(
+    project: Path, args: tuple[str, ...]
 ) -> None:
-    result = _ruff(_project(tmp_path), *args)
+    result = _run(project, *args)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_the_walks_get_scripts(project: Path) -> None:
+    pyproject = (project / "pyproject.toml").read_text()
+    assert 'hello = "demo_app.walks.hello:main"' in pyproject
+    assert 'loop = "demo_app.walks.loop:main"' in pyproject

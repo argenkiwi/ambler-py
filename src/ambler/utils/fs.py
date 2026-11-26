@@ -1,6 +1,7 @@
 """File-system and output capabilities shared by the scaffolding nodes."""
 
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Protocol
@@ -36,6 +37,10 @@ class ScaffoldUtils(Protocol):
     def print(self, message: str) -> None: ...
 
     def print_error(self, message: str) -> None: ...
+
+    def format(self, paths: list[Path]) -> None:
+        """Sorts the imports of ``paths`` and formats them with the project's ruff."""
+        ...
 
 
 class SystemScaffoldUtils:
@@ -76,3 +81,16 @@ class SystemScaffoldUtils:
 
     def print_error(self, message: str) -> None:
         print(message, file=sys.stderr)
+
+    def format(self, paths: list[Path]) -> None:
+        files = [str(path) for path in paths]
+        for args in (["check", "--select", "I", "--fix"], ["format"]):
+            try:
+                subprocess.run(
+                    [sys.executable, "-m", "ruff", *args, "--quiet", *files],
+                    cwd=self.root(),
+                    capture_output=True,
+                    check=False,
+                )
+            except OSError:
+                return
