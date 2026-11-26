@@ -34,6 +34,21 @@ def render_protocols(init_content: str, state_fields: list[StateField]) -> str:
     return init_content
 
 
+def _module(*blocks: str) -> str:
+    """Top-level ``blocks`` two blank lines apart, as ``ruff format`` writes them."""
+    return "\n\n\n".join(block.strip("\n") for block in blocks if block) + "\n"
+
+
+def _imports(stdlib: list[str], first_party: list[str]) -> str:
+    """Import groups in the order ``ruff check``'s isort rules expect."""
+    groups = [sorted(stdlib), sorted(first_party)]
+    return "\n\n".join("\n".join(group) for group in groups if group)
+
+
+def _names(names: list[str]) -> str:
+    return ", ".join(sorted(names))
+
+
 def render_node(
     pkg: str,
     cls_name: str,
@@ -44,59 +59,58 @@ def render_node(
     state_fields: list[StateField],
 ) -> str:
     protocols = [protocol_name(n) for n, _ in state_fields]
-    lines: list[str] = [
-        "from dataclasses import dataclass, field",
-    ]
+    stdlib = ["from dataclasses import dataclass, field", "from typing import Protocol"]
     if not terminal:
-        lines.append("from enum import Enum, auto")
-    lines.append("from typing import Protocol")
-    if protocols:
-        lines.append(f"from {pkg}.nodes import {', '.join(protocols)}")
+        stdlib.append("from enum import Enum, auto")
+    first_party = [f"from {pkg}.nodes import {_names(protocols)}"] if protocols else []
 
-    lines.append("\n")
-
+    outcome = ""
     if not terminal:
-        lines.append(
-            'class Outcome(Enum):\n    """Where this node leaves the walk."""\n'
-        )
-        for out in outcomes:
-            lines.append(f"    {out} = auto()\n")
-        lines.append("\n")
+        members = "\n".join(f"    {out} = auto()" for out in outcomes)
+        outcome = f'''class Outcome(Enum):
+    """Where this node leaves the walk."""
 
-    if fallible:
-        lines.append(
-            'class Error(Exception):\n    """What stops this node from finishing."""\n'
-        )
+{members}'''
+
+    error = (
+        '''class Error(Exception):
+    """What stops this node from finishing."""'''
+        if fallible
+        else ""
+    )
 
     if not protocols:
-        state_type = "object"
+        state_type, state = "object", ""
     elif len(protocols) == 1:
-        state_type = protocols[0]
+        state_type, state = protocols[0], ""
     else:
-        lines.append(f"class State({', '.join(protocols)}, Protocol):\n    pass\n\n")
         state_type = "State"
+        state = f"class State({', '.join(protocols)}, Protocol):\n    pass"
 
     ret_type = "None" if terminal else "Outcome"
 
-    lines.append(f'''class Utils(Protocol):
-    """The side effects this node needs: one method each, faked in the tests."""
-
-
-class SystemUtils:
-    """The real side effects."""
-
-
-@dataclass(frozen=True)
+    return _module(
+        _imports(stdlib, first_party),
+        outcome,
+        error,
+        state,
+        '''class Utils(Protocol):
+    """The side effects this node needs: one method each, faked in the tests."""''',
+        '''class SystemUtils:
+    """The real side effects."""''',
+        f'''@dataclass(frozen=True)
 class {cls_name}:
     """Atomic step node."""
 
     utils: Utils = field(default_factory=SystemUtils)
 
     async def run(self, state: {state_type}) -> {ret_type}:
-        raise NotImplementedError("{NOT_IMPLEMENTED_MARKER}")
-''')
+        raise NotImplementedError("{NOT_IMPLEMENTED_MARKER}")''',
+    )
 
-    return "\n".join(lines) + "\n"
+
+def _default(field_type: str) -> str:
+    return {"int": "0", "str": '""', "bool": "False"}.get(field_type, "None")
 
 
 def render_node_test(
@@ -109,118 +123,97 @@ def render_node_test(
     outcomes: list[str],
     state_fields: list[StateField],
 ) -> str:
-    t_lines: list[str] = [
-        "from dataclasses import dataclass\n",
-    ]
-    if fallible:
-        t_lines.append("import pytest\n")
-
-    imports = [cls_name]
-    if not terminal:
-        imports.append("Outcome")
-    if fallible:
-        imports.append("Error")
-    t_lines.append(f"from {pkg}.nodes.{name} import {', '.join(imports)}\n\n")
-
-    if state_fields:
-        t_lines.append("@dataclass\nclass MockState:\n")
-        for fn, ft in state_fields:
-            default_val = (
-                "0"
-                if ft == "int"
-                else '""'
-                if ft == "str"
-                else "False"
-                if ft == "bool"
-                else "None"
-            )
-            t_lines.append(f"    {fn}: {ft} = {default_val}\n")
-    else:
-        t_lines.append("@dataclass\nclass MockState:\n    pass\n")
-
-    t_lines.append('''
-class MockUtils:
-    """Fakes every side effect of the node."""
-
-
-''')
+    imports = [cls_name] if terminal else [cls_name, "Outcome"]
+    fields = "\n".join(f"    {fn}: {ft} = {_default(ft)}" for fn, ft in state_fields)
+    mock_state = f"@dataclass\nclass MockState:\n{fields or '    pass'}"
 
     if terminal:
-        t_lines.append(f"""async def test_finishes() -> None:
+        tests = [
+            f"""async def test_finishes() -> None:
     state = MockState()
-    await {cls_name}(MockUtils()).run(state)
-""")
+    await {cls_name}(MockUtils()).run(state)"""
+        ]
     else:
-        for out in outcomes:
-            t_lines.append(f"""async def test_{out.lower()}_when_pending() -> None:
+        tests = [
+            f"""async def test_{out.lower()}_when_pending() -> None:
     state = MockState()
     outcome = await {cls_name}(MockUtils()).run(state)
-    assert outcome == Outcome.{out}
-""")
+    assert outcome == Outcome.{out}"""
+            for out in outcomes
+        ]
 
-    return "\n".join(t_lines) + "\n"
+    return _module(
+        _imports(
+            ["from dataclasses import dataclass"],
+            [f"from {pkg}.nodes.{name} import {_names(imports)}"],
+        ),
+        mock_state,
+        '''class MockUtils:
+    """Fakes every side effect of the node."""''',
+        *tests,
+    )
 
 
 def render_walk(
     pkg: str, name: str, cls_name: str, node_names: list[str], edges: list[Edge]
 ) -> str:
-    lines: list[str] = [
-        '"""Walk implementation."""\n',
-        "from dataclasses import dataclass, field",
-        "from enum import Enum, auto\n",
-        f"from {pkg} import Walk",
+    first_party = [f"from {pkg} import Walk"] + [
+        f"from {pkg}.nodes.{n} import {to_pascal(n)}" for n in node_names
     ]
-    for n in node_names:
-        lines.append(f"from {pkg}.nodes.{n} import {to_pascal(n)}")
+    ids = "\n".join(f"    {to_shout(n)} = auto()" for n in node_names)
+    fields = "\n".join(
+        f"    {n}: {to_pascal(n)} = field(default_factory={to_pascal(n)})"
+        for n in node_names
+    )
 
-    lines.append("\n\n@dataclass\nclass State:\n    pass\n\n\nclass Id(Enum):\n")
+    arms: list[str] = []
     for n in node_names:
-        lines.append(f"    {to_shout(n)} = auto()\n")
-
-    lines.append(f"\n\n@dataclass(frozen=True)\nclass {cls_name}(Walk[Id, State]):\n")
-    for n in node_names:
-        p_name = to_pascal(n)
-        lines.append(f"    {n}: {p_name} = field(default_factory={p_name})\n")
-
-    lines.append("\n    async def step(self, id: Id, state: State) -> Id | None:\n")
-    lines.append("        match id:\n")
-    for n in node_names:
-        lines.append(f"            case Id.{to_shout(n)}:\n")
+        arms.append(f"            case Id.{to_shout(n)}:")
         matched_edges = [edge for edge in edges if edge[0] == n]
         if matched_edges:
-            lines.append(f"                match await self.{n}.run(state):\n")
+            arms.append(f"                match await self.{n}.run(state):")
             for _, outcome, tgt in matched_edges:
                 tgt_return = f"Id.{to_shout(tgt)}" if tgt.lower() != "halt" else "None"
-                lines.append(
-                    f"                    case {to_pascal(n)}.Outcome.{outcome}:\n"
+                arms.append(
+                    f"                    case {to_pascal(n)}.Outcome.{outcome}:"
                 )
-                lines.append(f"                        return {tgt_return}\n")
+                arms.append(f"                        return {tgt_return}")
         else:
-            lines.append(f"                # Wire outcomes for {n}\n")
-            lines.append(f"                await self.{n}.run(state)\n")
-            lines.append("                return None\n")
+            arms.append(f"                # Wire outcomes for {n}")
+            arms.append(f"                await self.{n}.run(state)")
+            arms.append("                return None")
+    step = "\n".join(arms)
 
-    lines.append(f'''
+    return _module(
+        '"""Walk implementation."""\n\n'
+        + _imports(
+            ["from dataclasses import dataclass, field", "from enum import Enum, auto"],
+            first_party,
+        ),
+        "@dataclass\nclass State:\n    pass",
+        f"class Id(Enum):\n{ids}",
+        f"""@dataclass(frozen=True)
+class {cls_name}(Walk[Id, State]):
+{fields}
 
-async def run() -> None:
+    async def step(self, id: Id, state: State) -> Id | None:
+        match id:
+{step}""",
+        f'''async def run() -> None:
     """Runs the {name} walk."""
-    await {cls_name}().run(Id.{to_shout(node_names[0])}, State())
-''')
-
-    return "".join(lines)
+    await {cls_name}().run(Id.{to_shout(node_names[0])}, State())''',
+    )
 
 
 def render_walk_test(pkg: str, name: str, cls_name: str, first_node: str) -> str:
-    return f"""import pytest
-from {pkg}.walks.{name} import {cls_name}, Id, State
-
-
-async def test_{name}_walk_initial_step() -> None:
+    return _module(
+        f"from {pkg}.walks.{name} import {_names([cls_name, 'Id', 'State'])}",
+        f"""async def test_{name}_walk_initial_step() -> None:
     walk = {cls_name}()
     state = State()
     next_id = await walk.step(Id.{to_shout(first_node)}, state)
-    assert next_id is None or isinstance(next_id, Id)
-"""
+    assert next_id is None or isinstance(next_id, Id)""",
+    )
 
 
 def render_walk_spec(cls_name: str, node_names: list[str]) -> str:
