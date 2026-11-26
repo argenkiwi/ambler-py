@@ -1,5 +1,6 @@
 """Pure source-code templates for the scaffolding nodes."""
 
+import ast
 import re
 import sys
 
@@ -21,21 +22,62 @@ def protocol_name(field_name: str) -> str:
     return f"Has{to_pascal(field_name)}"
 
 
-def render_protocols(init_content: str, state_fields: list[StateField]) -> str:
-    """Appends a ``Has*`` protocol for every state field not yet declared.
+def render_protocols(
+    init_content: str,
+    state_fields: list[StateField],
+    imports: Imports | None = None,
+    *,
+    pkg: str = "",
+) -> str:
+    """Appends a ``Has*`` protocol for every state field not yet declared, and adds
+    ``imports``, which the new protocols' types need, after the existing imports.
 
-    Returns ``init_content`` unchanged when nothing is missing.
+    The imports are not merged or sorted: ``ScaffoldUtils.format`` leaves that to the
+    project's ruff. Returns ``init_content`` unchanged when nothing is missing.
     """
+    needed = Imports()
+    protocols = ""
     for f_name, f_type in state_fields:
         p_name = protocol_name(f_name)
-        if p_name not in init_content:
-            if "from typing import Protocol" not in init_content:
-                init_content = "from typing import Protocol\n\n" + init_content
+        if p_name not in init_content and p_name not in protocols:
             doc = f'"""A state that has a {f_name} field."""'
-            init_content += (
+            protocols += (
                 f"\n\nclass {p_name}(Protocol):\n    {doc}\n\n    {f_name}: {f_type}\n"
             )
-    return init_content
+    if protocols:
+        if "from typing import Protocol" not in init_content:
+            needed.add_from("typing", "Protocol")
+        if imports is not None:
+            needed.update(imports)
+    return _add_imports(init_content, render_imports(pkg, needed)) + protocols
+
+
+def _add_imports(source: str, lines: str) -> str:
+    """``source`` with ``lines`` after its last top-level import, or else after its
+    docstring, or else at the top."""
+    if not lines:
+        return source
+    at, after_docstring = 0, False
+    for index, stmt in enumerate(ast.parse(source).body):
+        if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+            at, after_docstring = stmt.end_lineno or at, False
+        elif (
+            index == 0
+            and isinstance(stmt, ast.Expr)
+            and isinstance(stmt.value, ast.Constant)
+            and isinstance(stmt.value.value, str)
+        ):
+            at, after_docstring = stmt.end_lineno or at, True
+    source_lines = source.splitlines(keepends=True)
+    head, tail = source_lines[:at], source_lines[at:]
+    if head and not head[-1].endswith("\n"):
+        head[-1] += "\n"
+    block = f"{lines}\n"
+    if after_docstring:
+        block = "\n" + block
+    if not head:
+        block += "\n"
+    return "".join([*head, block, *tail])
 
 
 def _module(*blocks: str) -> str:

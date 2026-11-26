@@ -1,4 +1,3 @@
-import ast
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Protocol
@@ -9,7 +8,13 @@ from ambler.utils.fs import ProjectError
 from ambler.utils.fs import ScaffoldUtils as Utils
 from ambler.utils.fs import SystemScaffoldUtils as SystemUtils
 from ambler.utils.naming import to_pascal, to_shout, to_snake
-from ambler.utils.source import Imports, Protocols, SourceError, read_protocols
+from ambler.utils.source import (
+    Imports,
+    Protocols,
+    SourceError,
+    read_protocols,
+    resolve_type,
+)
 from ambler.utils.templates import (
     PACKAGE_INIT,
     StateField,
@@ -83,7 +88,7 @@ class ScaffoldNode:
             else PACKAGE_INIT
         )
         try:
-            state_fields, imports = _resolve_state_fields(
+            state_fields, imports, init_imports = _resolve_state_fields(
                 args.state or [], read_protocols(init_content, pkg)
             )
         except (SourceError, ValueError) as e:
@@ -93,9 +98,11 @@ class ScaffoldNode:
         self.utils.mkdir(nodes_dir)
         self.utils.mkdir(tests_dir)
 
-        updated = render_protocols(init_content, state_fields)
+        written = [node_file, test_file]
+        updated = render_protocols(init_content, state_fields, init_imports, pkg=pkg)
         if updated != init_content:
             self.utils.write_text(init_file, updated)
+            written.append(init_file)
 
         fallible: bool = args.fallible
         self.utils.write_text(
@@ -122,6 +129,7 @@ class ScaffoldNode:
                 imports=imports,
             ),
         )
+        self.utils.format(written)
 
         self.utils.print(f"Created {node_file}")
         self.utils.print(f"Created {test_file}")
@@ -133,28 +141,26 @@ class ScaffoldNode:
         return Outcome.FAILED
 
 
-def _normalise(type_text: str, field_name: str) -> str:
-    """``type_text`` as ``ast.unparse`` writes it, so equal types compare equal."""
-    try:
-        return ast.unparse(ast.parse(type_text, mode="eval"))
-    except SyntaxError as e:
-        raise ValueError(f"`{type_text}` is not a type for `{field_name}`") from e
-
-
 def _resolve_state_fields(
     items: list[str], protocols: Protocols
-) -> tuple[list[StateField], Imports]:
+) -> tuple[list[StateField], Imports, Imports]:
     """Parses ``name[:type]`` items against the existing ``Has*`` protocols.
 
     A field without a type reuses its protocol's type, and the imports that type
-    needs. A field with a type must match its protocol, if it has one.
+    needs. A field with a type has its ``a.b.Type`` paths shortened to ``Type``, and
+    must then match its protocol, if it has one.
+
+    Returns:
+        The fields, the imports their types need, and those of them that
+        nodes/__init__.py does not have yet.
 
     Raises:
-        ValueError: if a field has no type and no protocol, or a different type
-            from its protocol's.
+        ValueError: if a field has no type and no protocol, a different type from
+            its protocol's, or a type that cannot be resolved.
     """
     fields: list[StateField] = []
     imports = Imports()
+    new_imports = Imports()
     for item in items:
         raw_name, has_type, raw_type = item.partition(":")
         f_name = to_snake(raw_name.strip())
@@ -168,14 +174,27 @@ def _resolve_state_fields(
                 )
             f_type = existing
         else:
-            f_type = _normalise(raw_type.strip(), f_name)
+            f_type, needed = resolve_type(raw_type.strip(), f_name, protocols.origins)
             if existing is not None and existing != f_type:
                 raise ValueError(
                     f"`{f_name}` is already declared as `{existing}` in "
                     f"nodes/__init__.py, not `{f_type}`: use `--state {f_name}` "
                     "to reuse it"
                 )
+            imports.update(needed)
+            for module, names in needed.from_.items():
+                for name in names:
+                    if protocols.origins.get(name) == (module, name):
+                        continue
+                    other = next(
+                        (m for m, ns in new_imports.from_.items() if name in ns), module
+                    )
+                    if other != module:
+                        raise ValueError(
+                            f"`{name}` cannot come from both `{other}` and `{module}`"
+                        )
+                    new_imports.add_from(module, name)
         if existing is not None:
             imports.update(protocols.imports[protocol])
         fields.append((f_name, f_type))
-    return fields, imports
+    return fields, imports, new_imports

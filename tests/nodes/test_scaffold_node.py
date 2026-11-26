@@ -117,6 +117,104 @@ async def test_a_different_type_from_the_protocol_fails_with_exit_code_2() -> No
     assert "int" in fs.errors[0] and "str" in fs.errors[0]
 
 
+PKG_INIT = '"""Node package."""\n\nfrom typing import Protocol\n'
+
+
+async def test_a_type_given_by_its_path_is_imported_into_the_nodes_package() -> None:
+    fs = FakeFs({INIT_FILE: PKG_INIT})
+    state = MockState(argv=["count", "--terminal", "--state", "board:demo.board.Board"])
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.DONE
+
+    assert fs.files[INIT_FILE] == (
+        '"""Node package."""\n\nfrom typing import Protocol\n'
+        "from demo.board import Board\n\n\n"
+        'class HasBoard(Protocol):\n    """A state that has a board field."""\n\n'
+        "    board: Board\n"
+    )
+    test = fs.files[TEST_FILE]
+    assert "from demo.board import Board\n" in test
+    assert "    board: Board = field(default_factory=Board)\n" in test
+    assert sorted(fs.formatted) == sorted([NODE_FILE, TEST_FILE, INIT_FILE])
+
+
+async def test_a_generic_type_has_its_paths_shortened() -> None:
+    fs = FakeFs({INIT_FILE: PKG_INIT})
+    state = MockState(
+        argv=["count", "--terminal", "--state", "boards:list[demo.board.Board] | None"]
+    )
+
+    await ScaffoldNode(fs).run(state)
+
+    assert "from demo.board import Board\n" in fs.files[INIT_FILE]
+    assert "    boards: list[Board] | None\n" in fs.files[INIT_FILE]
+    assert "    boards: list[Board] | None = None\n" in fs.files[TEST_FILE]
+
+
+async def test_a_type_given_by_its_path_matches_the_protocol_that_uses_it() -> None:
+    init = (
+        '"""Node package."""\n\nfrom typing import Protocol\n\n'
+        "from demo.board import Board\n\n\n"
+        "class HasBoard(Protocol):\n    board: Board\n"
+    )
+    fs = FakeFs({INIT_FILE: init})
+    state = MockState(argv=["count", "--terminal", "--state", "board:demo.board.Board"])
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.DONE
+
+    assert fs.files[INIT_FILE] == init
+    assert "from demo.board import Board\n" in fs.files[TEST_FILE]
+
+
+async def test_an_imported_type_needs_no_path() -> None:
+    init = (
+        '"""Node package."""\n\nfrom pathlib import Path\nfrom typing import Protocol\n'
+    )
+    fs = FakeFs({INIT_FILE: init})
+    state = MockState(argv=["count", "--terminal", "--state", "path:Path"])
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.DONE
+
+    assert fs.files[INIT_FILE].count("from pathlib import Path") == 1
+    assert "from pathlib import Path\n" in fs.files[TEST_FILE]
+
+
+async def test_a_type_that_is_not_a_builtin_or_imported_fails_with_exit_code_2() -> (
+    None
+):
+    fs = FakeFs()
+    state = MockState(argv=["count", "--terminal", "--state", "path:Path"])
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.FAILED
+
+    assert state.exit_code == 2
+    assert fs.files == {}
+    assert "--state path:<module>.Path" in fs.errors[0]
+
+
+async def test_a_path_to_a_name_that_means_something_else_fails() -> None:
+    init = '"""Node package."""\n\nfrom typing import Protocol\n\nfrom x import Board\n'
+    fs = FakeFs({INIT_FILE: init})
+    state = MockState(argv=["count", "--terminal", "--state", "board:demo.board.Board"])
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.FAILED
+
+    assert state.exit_code == 2
+    assert fs.files == {INIT_FILE: init}
+
+
+async def test_two_paths_to_the_same_name_fail() -> None:
+    fs = FakeFs({INIT_FILE: PKG_INIT})
+    state = MockState(
+        argv=["count", "--terminal", "--state", "a:x.Board", "--state", "b:y.Board"]
+    )
+
+    assert await ScaffoldNode(fs).run(state) == Outcome.FAILED
+
+    assert state.exit_code == 2
+    assert fs.files == {INIT_FILE: PKG_INIT}
+
+
 async def test_existing_node_fails_with_exit_code_1() -> None:
     fs = FakeFs({NODE_FILE: "old"})
     state = MockState(argv=["count", "--terminal"])
