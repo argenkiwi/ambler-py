@@ -8,7 +8,7 @@ Every convention of a Python Ambler project, with why it is there. `uv run amble
 - `run` returns a member of the module's `Outcome` enum, named for what happened: `SUCCESS`, `INVALID_INPUT`. It never names the next node: wiring is the walk's job, so a node can be reused in any walk. A terminal node returns `None` and has no `Outcome`.
 - A node that cannot finish raises its module's `class Error(Exception)`, chaining the cause with `raise Error(...) from e`. An expected problem is an outcome. A node that cannot fail defines no `Error`.
 - `Utils` is a `Protocol`, one method per side effect; `SystemUtils` implements it. `Count()` runs for real and `Count(fake)` is for tests.
-- State is mutated in place. A node asks for it through `Has*` protocols in `nodes/__init__.py`, one field each, and requires only the fields it touches; several are combined in a node-local `State` protocol.
+- State is mutated in place. A node asks for it through `Has*` protocols in `nodes/__init__.py`, one field each, and requires only the fields it touches; several are combined in a node-local `State` protocol. State protocols belong to the nodes module boundary, never in sibling nodes or walk files.
 
 ## Walks
 
