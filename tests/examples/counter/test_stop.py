@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from ambler.examples.counter.stop import Stop
+from ambler.examples.counter.nodes.stop import Stop
 
 
 @dataclass

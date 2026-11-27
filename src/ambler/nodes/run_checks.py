@@ -6,7 +6,7 @@ from typing import Protocol
 
 from ambler.nodes import HasArgv, HasExitCode
 from ambler.utils.args import ArgParser, UsageError
-from ambler.utils.conventions import todo
+from ambler.utils.conventions import state_protocols, todo
 from ambler.utils.fs import ProjectError, SystemScaffoldUtils
 
 PYTEST_NO_TESTS_COLLECTED = 5
@@ -84,7 +84,8 @@ class RunChecks:
         violations = [
             line
             for path, source in sorted(self.utils.sources().items())
-            for line in todo(path, source)
+            for rule in (todo, state_protocols)
+            for line in rule(path, source)
         ]
         if violations:
             for line in violations:

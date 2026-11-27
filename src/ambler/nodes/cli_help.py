@@ -10,7 +10,7 @@ USAGE = """Usage: uv run ambler <command> [options]
 Ambler Python Tooling
 
 Commands:
-  node <name> (--outcomes <a,b> | --terminal) [--fallible] [--state <name[:type]>...]
+  node <name> (--outcomes <a,b> | --terminal) [--fallible] [--state <field>[:<Type>]]...
                  Scaffold a node
   walk <name> --nodes <n1,n2> [--edge <node.OUTCOME=target>...] [--no-runner]
                  Wire a walk

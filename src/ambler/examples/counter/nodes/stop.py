@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Protocol
 
-from ambler.examples.counter import HasCount
+from ambler.examples.counter.nodes import HasCount
 
 
 class Utils(Protocol):

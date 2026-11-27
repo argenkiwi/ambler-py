@@ -117,3 +117,24 @@ async def test_a_finished_project_goes_on_to_the_tools() -> None:
 
     assert await RunChecks(utils).run(MockState()) == Outcome.DONE
     assert utils.ran == [FORMAT, LINT, TYPES, TESTS]
+
+
+async def test_a_broken_state_contract_fails_before_any_tool_runs() -> None:
+    utils = MockUtils(
+        sources={
+            "src/demo/nodes/greet.py": (
+                "from typing import Protocol\n\n\n"
+                "class HasName(Protocol):\n    name: str\n"
+            )
+        }
+    )
+    state = MockState()
+
+    assert await RunChecks(utils).run(state) == Outcome.FAILED
+
+    assert utils.ran == []
+    assert [line.split(": ")[:2] for line in utils.out] == [
+        ["src/demo/nodes/greet.py:4", "state-protocols"]
+    ]
+    assert utils.errors == ["Check failed: 1 convention violation"]
+    assert state.exit_code == 1
