@@ -1,10 +1,10 @@
 from collections import deque
 from collections.abc import Iterable
 
-from ambler.examples.counter.count import Count
-from ambler.examples.counter.counter import Counter, Id, State
-from ambler.examples.counter.start import Start
-from ambler.examples.counter.stop import Stop
+from ambler.examples.counter.nodes.count import Count
+from ambler.examples.counter.nodes.start import Start
+from ambler.examples.counter.nodes.stop import Stop
+from ambler.examples.counter.walks.counter import Counter, Id, State
 
 
 class Script:

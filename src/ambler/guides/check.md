@@ -13,6 +13,7 @@ If there are none, it runs `uv run ruff format --check`, `uv run ruff check`, `u
 - `layout`: `pyproject.toml` and `src/<package>/engine.py` exist, the package named after `[project] name`.
 - `parse`: the file is valid Python.
 - `todo`: no `not yet implemented` or `not yet wired` is left in a node, walk, utility or test.
+- `state-protocols`: `Has*` protocols are declared only in `nodes/__init__.py`; each extends only `Protocol` and holds exactly one annotated field, `HasExitCode` for `exit_code`. A node's local `State` extends only `Has*` protocols and `Protocol`, and declares no field of its own.
 - `file-name`: node, walk and utility modules are snake_case, not keywords.
 - `node-shape`: a node module has its class, a `@dataclass(frozen=True)` with `async def run`; a `Utils` protocol; `SystemUtils`; and an `Outcome` enum of UPPER_SNAKE members, unless `run` returns `None`.
 - `node-tests`: a node has `tests/nodes/test_<node>.py`.

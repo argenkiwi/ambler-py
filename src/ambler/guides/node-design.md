@@ -26,6 +26,7 @@ A node does one thing a spec can describe in a sentence or two. If the descripti
 ## State
 
 - Ask only for the fields the node reads or writes, through `Has*` protocols: `--state count` reuses `HasCount`, `--state name:str` declares `HasName`.
+- Each `Has*` protocol holds one field and lives in `nodes/__init__.py`. A node composes them, `run(state: HasCount)` or a local `class State(HasCount, HasName, Protocol): pass`; it never declares a field itself. Need a new field? Add a `--state` for it, or a `Has*` protocol in `nodes/__init__.py`.
 - Mutate the state in place: `state.count += 1`.
 
 ## Utils

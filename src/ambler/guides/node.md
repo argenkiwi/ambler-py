@@ -9,7 +9,7 @@ Writes `src/<package>/nodes/<name>.py` and its tests, `tests/nodes/test_<name>.p
 - `--terminal`: the node ends the walk; `run` returns `None` and there is no `Outcome`. Give exactly one of `--outcomes` and `--terminal`.
 - `--fallible`: adds `class Error(Exception)` for what stops the node, and a test that expects it.
 - `--state count`: the node needs the existing `HasCount` protocol from `nodes/__init__.py`.
-- `--state name:str`: declares a new `HasName` protocol there and requires it. Repeat `--state` for more; a node that needs several gets a local `State` protocol combining them.
+- `--state name:str`: declares a new `HasName` protocol there and requires it. Each `Has*` protocol holds exactly one field. Repeat `--state` for more; a node that needs several gets a local `class State(HasA, HasB, Protocol): pass` that only combines them. Without `--state` the node takes `state: object`.
 - `--state board:my_app.board.Board`: a type that needs an import is given by its path. `nodes/__init__.py` imports it and the protocol uses `Board`; tests and walks that hold the field import it too. Paths work inside other types, `list[my_app.board.Board] | None`. Any other name must be a builtin or already imported in `nodes/__init__.py`: `--state path:Path` fails until it is `path:pathlib.Path`. A path that starts with a name `nodes/__init__.py` already imports, `datetime.date` after `import datetime`, is kept as written. Do not quote types.
 
 What you get:

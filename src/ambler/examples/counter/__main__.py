@@ -3,7 +3,7 @@
 import asyncio
 import sys
 
-from ambler.examples.counter import counter
+from ambler.examples.counter.walks import counter
 
 
 def main() -> None:

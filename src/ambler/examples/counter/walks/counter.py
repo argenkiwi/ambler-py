@@ -1,6 +1,6 @@
 """Asks for a number, counts up from it once a second, and stops at random.
 
-See ``specs/counter.md``. The public surface is ``Error`` and ``run()``; the other
+See ``../spec.md``. The public surface is ``Error`` and ``run()``; the other
 names are exported only for the wiring test.
 """
 
@@ -8,10 +8,10 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 
 from ambler import Walk
-from ambler.examples.counter import count, start
-from ambler.examples.counter.count import Count
-from ambler.examples.counter.start import Start
-from ambler.examples.counter.stop import Stop
+from ambler.examples.counter.nodes import count, start
+from ambler.examples.counter.nodes.count import Count
+from ambler.examples.counter.nodes.start import Start
+from ambler.examples.counter.nodes.stop import Stop
 
 __all__ = ["Error", "run"]
 

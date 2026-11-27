@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 
-from ambler.examples.counter.count import Count, Outcome
+from ambler.examples.counter.nodes.count import Count, Outcome
 
 
 @dataclass

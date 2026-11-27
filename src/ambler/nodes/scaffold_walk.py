@@ -25,7 +25,9 @@ from ambler.utils.templates import (
     render_walk_test,
 )
 
-NODE_USAGE = "(--outcomes <a,b> | --terminal) [--state <field>[:<Type>]]..."
+NODE_USAGE = (
+    "(--outcomes <a,b> | --terminal) [--fallible] [--state <field>[:<Type>]]..."
+)
 
 
 class Outcome(Enum):

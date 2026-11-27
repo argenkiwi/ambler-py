@@ -76,7 +76,7 @@ async def step(self, id: Id, state: State) -> Id | None:
         # ...
 ```
 
-Then `await walk.run(Id.START, state)` steps until a node halts. The complete walk is in [`src/ambler/examples/counter/counter.py`](src/ambler/examples/counter/counter.py) and its wiring test is in [`tests/examples/counter/test_counter.py`](tests/examples/counter/test_counter.py).
+Then `await walk.run(Id.START, state)` steps until a node halts. The complete walk is in [`src/ambler/examples/counter/walks/counter.py`](src/ambler/examples/counter/walks/counter.py) and its wiring test is in [`tests/examples/counter/test_counter.py`](tests/examples/counter/test_counter.py).
 
 > [!TIP]
 > Don't add a `case _:` arm when matching outcomes. Leaving it out is what makes pyright (`reportMatchNotExhaustive`, enabled in `pyproject.toml`) fail on a newly added outcome until it is wired. Treat `uv run pyright` as part of the build: a walk that skips the check silently halts on an unwired outcome.
