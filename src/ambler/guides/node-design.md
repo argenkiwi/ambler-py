@@ -26,6 +26,8 @@ A node does one thing a spec can describe in a sentence or two. If the descripti
 ## State
 
 - Ask only for the fields the node reads or writes, through `Has*` protocols: `--state count` reuses `HasCount`, `--state name:str` declares `HasName`.
+- Atomic `Has*` protocols live in `nodes/__init__.py` (or `nodes/state.py` re-exported there in larger projects). Never import a state protocol from a sibling node module.
+- When a node needs multiple fields, combine them into a node-local `State` protocol inside the node file (`class State(HasA, HasB, Protocol): pass`).
 - Mutate the state in place: `state.count += 1`.
 
 ## Utils
